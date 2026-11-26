@@ -1,6 +1,7 @@
-"""Raw (bronze) files of the ingest tasks, written straight into the ADLS container bronze.
+"""Raw (bronze) files of the ingest tasks, written straight into landing/ of the ADLS container bronze.
 
-Key 'bronze/<rest>' -> '<BRONZE_ROOT>/<rest>', e.g. abfss://bronze@<account>.dfs.core.windows.net/tmdb/movies/...
+Key 'bronze/<rest>' -> '<BRONZE_ROOT>/<rest>',
+e.g. abfss://bronze@<account>.dfs.core.windows.net/landing/tmdb/movies/...
 On Databricks, abfss:// paths go through dbutils.fs, which uses the Unity Catalog external location of the container
 (no key or secret in the code). BRONZE_ROOT may also be a local folder, to try an ingest on a laptop.
 """
@@ -24,7 +25,8 @@ def bronze_path(key: str) -> str:
     if not key.startswith(BRONZE):
         raise ValueError(f"only bronze/ keys are written by the ingest tasks, got {key!r}")
     if not config.BRONZE_ROOT:
-        raise ValueError("BRONZE_ROOT is not set: pass --set BRONZE_ROOT=abfss://bronze@<account>.dfs.core.windows.net")
+        raise ValueError("BRONZE_ROOT is not set: pass "
+                         "--set BRONZE_ROOT=abfss://bronze@<account>.dfs.core.windows.net/landing")
     return f"{config.BRONZE_ROOT}/{key[len(BRONZE):]}"
 
 

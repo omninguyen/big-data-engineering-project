@@ -33,8 +33,9 @@ def _secret(name: str, key: str, default: str = "") -> str:
 UC_CATALOG = _get("UC_CATALOG", "big_data_engineering")
 if not re.fullmatch(r"[A-Za-z0-9_]+", UC_CATALOG):
     raise ValueError(f"UC_CATALOG may only contain letters, digits and underscores, got {UC_CATALOG!r}")
-# Raw files: the ADLS container bronze, e.g. abfss://bronze@<account>.dfs.core.windows.net (a Unity Catalog
-# external location), set by the job with --set BRONZE_ROOT=... A local folder also works, outside Databricks.
+# Raw files: the folder landing/ of the ADLS container bronze (a Unity Catalog external location), e.g.
+# abfss://bronze@<account>.dfs.core.windows.net/landing. The Delta tables go next to it, in tables/.
+# Set by the job with --set BRONZE_ROOT=... A local folder also works, outside Databricks.
 BRONZE_ROOT = _get("BRONZE_ROOT").rstrip("/")
 
 # ================= sources =================
