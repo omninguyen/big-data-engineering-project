@@ -2,7 +2,8 @@
 # Runs when a merged pull request changes src/ (a push to main), or by hand: Actions -> cd -> Run workflow.
 # The tests (ci.yml) run first; nothing is deployed if they fail.
 #
-# Secrets (repository or environment "prod"):
+# Secrets: Settings -> Secrets and variables -> Actions -> tab Secrets (not Variables), as repository secrets or
+# secrets of the environment "prod":
 #   DATABRICKS_HOST                                   workspace URL, https://<workspace>.azuredatabricks.net
 #   DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET   OAuth secret of the deploying service principal
 name: cd
@@ -42,15 +43,29 @@ jobs:
       - uses: databricks/setup-cli@main   # pin a release tag for reproducible deploys
 
       - name: Check secrets
+        env:
+          # true or false, never a value: tells a secret saved by mistake as a variable apart from a missing one
+          DATABRICKS_HOST_IS_VARIABLE: ${{ vars.DATABRICKS_HOST != '' }}
+          DATABRICKS_CLIENT_ID_IS_VARIABLE: ${{ vars.DATABRICKS_CLIENT_ID != '' }}
+          DATABRICKS_CLIENT_SECRET_IS_VARIABLE: ${{ vars.DATABRICKS_CLIENT_SECRET != '' }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          # Secret values stay masked in the log.
-          if [ -z "$DATABRICKS_CLIENT_ID" ] || [ -z "$DATABRICKS_CLIENT_SECRET" ]; then
-            echo "::error::Add the secrets DATABRICKS_CLIENT_ID and DATABRICKS_CLIENT_SECRET (service principal)."
-            exit 1
-          fi
+          # Only checks whether each secret is set; the values stay masked in the log.
+          missing=0
+          for name in DATABRICKS_HOST DATABRICKS_CLIENT_ID DATABRICKS_CLIENT_SECRET; do
+            [ -n "${!name}" ] && continue
+            missing=1
+            as_variable="${name}_IS_VARIABLE"
+            if [ "${!as_variable}" = true ]; then
+              echo "::error::$name is saved as a variable, not a secret. Delete the variable and add it under Settings > Secrets and variables > Actions > Secrets."
+            else
+              echo "::error::Secret $name is empty in this job. Add it to $REPOSITORY under Settings > Secrets and variables > Actions > Secrets (repository secret, or secret of the environment prod)."
+            fi
+          done
+          [ "$missing" = 0 ] || exit 1
           case "$DATABRICKS_HOST" in
             https://*) ;;
-            *) echo "::error::Secret DATABRICKS_HOST is missing or does not start with https://."
+            *) echo "::error::Secret DATABRICKS_HOST must start with https://, e.g. https://adb-<id>.<n>.azuredatabricks.net."
                exit 1 ;;
           esac
           case "$TARGET" in
