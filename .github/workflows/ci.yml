@@ -1,5 +1,5 @@
 # Unit tests of the ingest code. Runs when a merged pull request changes src/ (a push to main), or by hand:
-# Actions -> ci -> Run workflow. Dev branches and pull requests run nothing.
+# Actions -> ci -> Run workflow. cd.yml also calls it before deploying. Dev branches and pull requests run nothing.
 name: ci
 
 on:
@@ -8,12 +8,13 @@ on:
     paths:
       - "src/**"
   workflow_dispatch:
+  workflow_call:  # from cd.yml
 
 permissions:
   contents: read
 
-concurrency:
-  group: ci-${{ github.ref }}
+concurrency:  # per calling workflow: a run of ci never cancels the tests inside cd, and the other way round
+  group: ${{ github.workflow }}-tests-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

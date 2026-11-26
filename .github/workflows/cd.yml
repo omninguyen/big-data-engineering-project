@@ -1,0 +1,68 @@
+# Deploys src/ to /Shared/big-data-engineering-project/src in the Databricks workspace.
+# Runs when a merged pull request changes src/ (a push to main), or by hand: Actions -> cd -> Run workflow.
+# The tests (ci.yml) run first; nothing is deployed if they fail.
+#
+# Secrets (repository or environment "prod"):
+#   DATABRICKS_HOST                                   workspace URL, https://<workspace>.azuredatabricks.net
+#   DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET   OAuth secret of the deploying service principal
+name: cd
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:  # one deploy at a time, never cancel one halfway
+  group: cd-prod
+  cancel-in-progress: false
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main'   # a manual run on another branch only tests
+    runs-on: ubuntu-latest
+    environment: prod
+    timeout-minutes: 15
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_AUTH_TYPE: oauth-m2m   # service principal only, no personal access token
+      DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+      TARGET: /Shared/big-data-engineering-project/src
+    steps:
+      - uses: actions/checkout@v4
+      - uses: databricks/setup-cli@main   # pin a release tag for reproducible deploys
+
+      - name: Check secrets
+        run: |
+          # Secret values stay masked in the log.
+          if [ -z "$DATABRICKS_CLIENT_ID" ] || [ -z "$DATABRICKS_CLIENT_SECRET" ]; then
+            echo "::error::Add the secrets DATABRICKS_CLIENT_ID and DATABRICKS_CLIENT_SECRET (service principal)."
+            exit 1
+          fi
+          case "$DATABRICKS_HOST" in
+            https://*) ;;
+            *) echo "::error::Secret DATABRICKS_HOST is missing or does not start with https://."
+               exit 1 ;;
+          esac
+
+      - name: Check the connection
+        run: databricks current-user me
+
+      - name: Deploy src/ to /Shared
+        run: |
+          # Replace the previous upload, so files removed from the repo disappear from the workspace too.
+          if databricks workspace get-status "$TARGET" > /dev/null 2>&1; then
+            databricks workspace delete "$TARGET" --recursive
+          fi
+          databricks workspace mkdirs "$TARGET"
+          databricks workspace import-dir src "$TARGET"
+          databricks workspace list "$TARGET"
