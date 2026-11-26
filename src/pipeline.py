@@ -1,13 +1,14 @@
-"""Ingest for Databricks: source API -> landing volume (JSONL), one Python task per source.
+"""Ingest for Databricks: source API -> the ADLS container bronze (JSONL), one Python task per source.
 
   python pipeline.py [--set KEY=VALUE ...] ingest --source tmdb|musicbrainz [--date YYYY-MM-DD]
 
-ingest     TMDB movies -> <landing>/tmdb/movies/dt=<date>/batch_id=<batch id>/, MusicBrainz albums ->
-           <landing>/musicbrainz/release_groups/dt=<date>/batch_id=<batch id>/
-           (landing: UC_LANDING_ROOT, default /Volumes/<UC_CATALOG>/bronze/landing). Every run is a new batch
+ingest     TMDB movies -> <bronze>/tmdb/movies/dt=<date>/batch_id=<batch id>/, MusicBrainz albums ->
+           <bronze>/musicbrainz/release_groups/dt=<date>/batch_id=<batch id>/
+           (bronze: BRONZE_ROOT, e.g. abfss://bronze@<account>.dfs.core.windows.net). Every run is a new batch
            (src/ingest/batch.py), so a rerun of the same --date never overwrites an earlier one.
 --set      settings of src/common/config.py, applied before it is imported. Serverless job tasks have no cluster
-           environment variables, so the job passes them as parameters, e.g. --set UC_CATALOG=big_data_engineering
+           environment variables, so the job passes them as parameters, e.g.
+           --set BRONZE_ROOT=abfss://bronze@<account>.dfs.core.windows.net
 
 --date defaults to today (UTC). A non-zero exit fails the task, so Databricks retries it. TMDB without an API key
 (secret tmdb-api-key) is the one expected gap: it is logged and the task succeeds (Databricks has no 'skipped' state).
@@ -49,7 +50,7 @@ def ingest(args) -> int:
     if args.source == "musicbrainz":
         from ingest import musicbrainz
         return musicbrainz.run(args.date, batch_id)
-    if config.MOVIE_SOURCE == "file":  # TMDB export uploaded to MOVIE_FILE in the landing volume
+    if config.MOVIE_SOURCE == "file":  # TMDB export uploaded to MOVIE_FILE, by default <bronze>/manual/
         from ingest import tmdb_file
         return tmdb_file.run(args.date, batch_id)
     if config.MOVIE_SOURCE == "sample":  # built-in demo set, no network needed
@@ -71,11 +72,11 @@ TASKS = {"ingest": ingest}
 
 
 def parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="pipeline.py", description="Ingest for Databricks: source API -> landing volume")
+    p = argparse.ArgumentParser(prog="pipeline.py", description="Ingest for Databricks: source API -> ADLS bronze")
     p.add_argument("--set", dest="settings", type=_setting, action="append", default=[], metavar="KEY=VALUE",
                    help="environment setting for src/common/config.py, repeatable")
     sub = p.add_subparsers(dest="task", required=True)
-    s = sub.add_parser("ingest", help="source API -> landing volume (bronze JSONL)")
+    s = sub.add_parser("ingest", help="source API -> ADLS container bronze (JSONL)")
     s.add_argument("--source", choices=["tmdb", "musicbrainz"], required=True)
     s.add_argument("--date", type=_date, default="")
     return p

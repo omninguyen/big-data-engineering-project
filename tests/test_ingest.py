@@ -16,6 +16,7 @@ from common import config  # noqa: E402
 from common.errors import MissingCredentials, SourceError  # noqa: E402
 
 KEY = "abcdef0123456789abcdef0123456789"  # 32 chars: a v3 API key, sent as ?api_key=
+ADLS = "abfss://bronze@acct.dfs.core.windows.net"
 
 
 def response(status=200, payload=None):
@@ -36,6 +37,7 @@ class TmdbTest(unittest.TestCase):
     def run_with(self, handler, key=KEY):
         sess = FakeSession(handler)
         with mock.patch.object(config, "TMDB_API_KEY", key), mock.patch.object(config, "TMDB_PAGES", 1), \
+                mock.patch.object(config, "BRONZE_ROOT", ADLS), \
                 mock.patch.object(tmdb, "session", return_value=sess), mock.patch.object(tmdb.time, "sleep"), \
                 mock.patch("common.storage.put_jsonl", side_effect=lambda k, recs: len(list(recs))) as put:
             return tmdb.run("2026-11-24", "B1"), put, sess
@@ -80,6 +82,7 @@ class TmdbTest(unittest.TestCase):
 class MusicBrainzTest(unittest.TestCase):
     def run_with(self, handler):
         with mock.patch.object(config, "MB_GENRES", ["jazz", "rock"]), mock.patch.object(config, "MB_PAGES_PER_GENRE", 1), \
+                mock.patch.object(config, "BRONZE_ROOT", ADLS), \
                 mock.patch.object(musicbrainz, "session", return_value=FakeSession(handler)), \
                 mock.patch.object(musicbrainz.time, "sleep"), \
                 mock.patch("common.storage.put_jsonl", side_effect=lambda k, recs: len(list(recs))) as put:

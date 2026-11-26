@@ -30,11 +30,12 @@ def _secret(name: str, key: str, default: str = "") -> str:
 
 
 # ================= Unity Catalog =================
-# Raw files land in the volume <catalog>.bronze.landing
 UC_CATALOG = _get("UC_CATALOG", "big_data_engineering")
 if not re.fullmatch(r"[A-Za-z0-9_]+", UC_CATALOG):
     raise ValueError(f"UC_CATALOG may only contain letters, digits and underscores, got {UC_CATALOG!r}")
-UC_LANDING_ROOT = (_get("UC_LANDING_ROOT") or f"/Volumes/{UC_CATALOG}/bronze/landing").rstrip("/")
+# Raw files: the ADLS container bronze, e.g. abfss://bronze@<account>.dfs.core.windows.net (a Unity Catalog
+# external location), set by the job with --set BRONZE_ROOT=... A local folder also works, outside Databricks.
+BRONZE_ROOT = _get("BRONZE_ROOT").rstrip("/")
 
 # ================= sources =================
 TMDB_API_KEY = _secret("TMDB_API_KEY", "tmdb-api-key")
@@ -43,7 +44,7 @@ TMDB_BASE_URL = _get("TMDB_BASE_URL", "https://api.themoviedb.org/3").rstrip("/"
 MOVIE_SOURCE = _get("MOVIE_SOURCE", "tmdb").lower()  # tmdb | file (exported by the browser) | sample (demo set)
 if MOVIE_SOURCE not in ("tmdb", "file", "sample"):
     raise ValueError(f"MOVIE_SOURCE must be tmdb, file or sample, got {MOVIE_SOURCE!r}")
-MOVIE_FILE = _get("MOVIE_FILE") or f"{UC_LANDING_ROOT}/manual/tmdb_movies.json"
+MOVIE_FILE = _get("MOVIE_FILE") or (f"{BRONZE_ROOT}/manual/tmdb_movies.json" if BRONZE_ROOT else "")
 TMDB_PAGES = int(_get("TMDB_PAGES", "20"))
 MB_CONTACT = _get("MB_CONTACT", "you@example.com")  # MusicBrainz requires a contact in the User-Agent
 MB_GENRES = [g.strip() for g in _get(

@@ -1,10 +1,9 @@
-"""Raw (bronze) file writes for the ingest tasks: the Unity Catalog landing volume UC_LANDING_ROOT.
+"""Raw (bronze) files of the ingest tasks, written straight into the ADLS container bronze.
 
-Key 'bronze/<rest>' -> '<UC_LANDING_ROOT>/<rest>'. On Databricks compute the volume is mounted under /Volumes,
-so it is a plain file write. From a laptop (debugging an ingest module), the Databricks Files API is used:
-databricks-sdk with DATABRICKS_HOST + DATABRICKS_TOKEN, or `databricks auth login`.
+Key 'bronze/<rest>' -> '<BRONZE_ROOT>/<rest>', e.g. abfss://bronze@<account>.dfs.core.windows.net/tmdb/movies/...
+On Databricks, abfss:// paths go through dbutils.fs, which uses the Unity Catalog external location of the container
+(no key or secret in the code). BRONZE_ROOT may also be a local folder, to try an ingest on a laptop.
 """
-import io
 import json
 import os
 import posixpath
@@ -21,27 +20,40 @@ def jsonl_bytes(records: Iterable[dict]):
     return (("\n".join(lines) + "\n").encode("utf-8") if lines else b""), len(lines)
 
 
-def volume_path(key: str) -> str:
+def bronze_path(key: str) -> str:
     if not key.startswith(BRONZE):
-        raise ValueError(f"only bronze/ keys live in the landing volume, got {key!r}")
-    return f"{config.UC_LANDING_ROOT}/{key[len(BRONZE):]}"
+        raise ValueError(f"only bronze/ keys are written by the ingest tasks, got {key!r}")
+    if not config.BRONZE_ROOT:
+        raise ValueError("BRONZE_ROOT is not set: pass --set BRONZE_ROOT=abfss://bronze@<account>.dfs.core.windows.net")
+    return f"{config.BRONZE_ROOT}/{key[len(BRONZE):]}"
 
 
-def _workspace():
-    from databricks.sdk import WorkspaceClient
-    return WorkspaceClient()
+def _in_cloud(path: str) -> bool:
+    return path.startswith("abfss://")
+
+
+def _dbutils():
+    from databricks.sdk.runtime import dbutils  # preinstalled on Databricks runtimes
+    return dbutils
+
+
+def _fs():
+    if not config.ON_DATABRICKS:
+        raise RuntimeError("abfss:// paths are only reachable on Databricks; "
+                           "set BRONZE_ROOT to a local folder to run the ingest elsewhere")
+    return _dbutils().fs
 
 
 def put_bytes(key: str, body: bytes) -> str:
-    path = volume_path(key)
-    if config.ON_DATABRICKS:
-        os.makedirs(posixpath.dirname(path), exist_ok=True)
+    path = bronze_path(key)
+    if _in_cloud(path):
+        fs = _fs()
+        fs.mkdirs(posixpath.dirname(path))
+        fs.put(path, body.decode("utf-8"), overwrite=True)
+    else:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as f:
             f.write(body)
-    else:
-        w = _workspace()
-        w.files.create_directory(posixpath.dirname(path))  # idempotent, like mkdir -p
-        w.files.upload(path, io.BytesIO(body), overwrite=True)
     return path
 
 
@@ -49,3 +61,13 @@ def put_jsonl(key: str, records: Iterable[dict]) -> int:
     body, n = jsonl_bytes(records)
     put_bytes(key, body)
     return n
+
+
+def read_text(path: str) -> str:
+    """A whole text file, on ADLS (abfss://) or local. A missing local file raises FileNotFoundError."""
+    if _in_cloud(path):
+        fs = _fs()
+        size = fs.ls(path)[0].size
+        return fs.head(path, size) if size else ""
+    with open(path, encoding="utf-8") as f:
+        return f.read()

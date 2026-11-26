@@ -81,7 +81,7 @@ class IngestTest(unittest.TestCase):
         def no_key(ds, batch_id):
             raise MissingCredentials("TMDB_API_KEY is empty")
         root = tempfile.mkdtemp()
-        with mock.patch.object(config, "ON_DATABRICKS", True), mock.patch.object(config, "UC_LANDING_ROOT", root), \
+        with mock.patch.object(config, "ON_DATABRICKS", True), mock.patch.object(config, "BRONZE_ROOT", root), \
                 mock.patch.object(batch, "new_batch_id", return_value="B1"), self.assertLogs("pipeline", "WARNING"):
             self.assertEqual(self.ingest("tmdb", tmdb_run=no_key), 0)
         path = os.path.join(root, "tmdb", "movies", "dt=2026-11-24", "batch_id=B1", "skipped.jsonl")
