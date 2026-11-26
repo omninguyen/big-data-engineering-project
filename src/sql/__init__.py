@@ -17,12 +17,13 @@ from string import Template
 
 log = logging.getLogger(__name__)
 HERE = os.path.dirname(os.path.abspath(__file__))
-BRONZE_TABLES = ["tmdb_movies", "musicbrainz_release_groups"]
-SILVER_TABLES = ["load_log", "movie", "movie_metric_daily", "release_group", "artist",
+BRONZE_TABLES = ["tmdb_movies", "musicbrainz_release_groups", "listenbrainz_release_group_popularity"]
+SILVER_TABLES = ["load_log", "movie", "movie_metric_daily", "release_group", "artist", "release_group_metric_daily",
                  "genre", "movie_genre", "release_group_genre", "release_group_artist"]  # genre before its foreign keys
 SILVER_INCREMENTAL = {  # silver table: its bronze table
     "movie": "tmdb_movies", "movie_metric_daily": "tmdb_movies",
-    "release_group": "musicbrainz_release_groups", "artist": "musicbrainz_release_groups"}
+    "release_group": "musicbrainz_release_groups", "artist": "musicbrainz_release_groups",
+    "release_group_metric_daily": "listenbrainz_release_group_popularity"}
 SILVER_FULL = ["genre", "movie_genre", "release_group_genre", "release_group_artist"]
 SILVER_LOADED = [*SILVER_INCREMENTAL, *SILVER_FULL]  # every silver table with a load (load_log is written by them)
 BATCH_ID = re.compile(r"[0-9A-Za-z-]+")

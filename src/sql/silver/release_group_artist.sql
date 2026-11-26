@@ -1,5 +1,5 @@
 -- Silver table linking albums to their credited artists, Type 1 (current state only), from each album's latest
--- MusicBrainz batch. Created if missing by: pipeline.py silver. Rebuilt on every run
+-- MusicBrainz batch. Created if missing by: pipeline.py setup. Rebuilt on every run
 -- (silver/load/release_group_artist.sql).
 CREATE TABLE IF NOT EXISTS ${catalog}.silver.release_group_artist (
   release_group_id  STRING     NOT NULL COMMENT 'MusicBrainz release group id (silver.release_group)',

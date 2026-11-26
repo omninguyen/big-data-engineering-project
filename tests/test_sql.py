@@ -15,7 +15,8 @@ LANDING = "abfss://bronze@acct.dfs.core.windows.net/landing"
 LINEAGE = {"dt", "batch_id", "_source_file", "_ingested_at", "_file_size", "_file_modified_at"}
 SILVER = "abfss://silver@acct.dfs.core.windows.net"
 ROOTS = {"bronze": ROOT, "silver": SILVER}
-SOURCES = {"tmdb_movies": "tmdb/movies", "musicbrainz_release_groups": "musicbrainz/release_groups"}
+SOURCES = {"tmdb_movies": "tmdb/movies", "musicbrainz_release_groups": "musicbrainz/release_groups",
+           "listenbrainz_release_group_popularity": "listenbrainz/release_group_popularity"}
 
 
 def create(layer: str, name: str) -> str:
@@ -81,7 +82,11 @@ class StatementTest(unittest.TestCase):
     def test_columns(self):
         for name in sql.BRONZE_TABLES:
             with self.subTest(table=name):
-                self.assertLessEqual({"id", "title"} | LINEAGE, set(columns(name)))
+                self.assertLessEqual(LINEAGE, set(columns(name)))
+        for name in ("tmdb_movies", "musicbrainz_release_groups"):
+            self.assertLessEqual({"id", "title"}, set(columns(name)))
+        self.assertEqual(columns("listenbrainz_release_group_popularity")[:3],
+                         ["release_group_mbid", "total_listen_count", "total_user_count"])
         # fields written by the ingest that silver may need
         self.assertLessEqual({"endpoint", "genres", "genre_ids", "overview", "original_title", "poster_path"},
                              set(columns("tmdb_movies")))
@@ -127,8 +132,9 @@ class CreateTest(unittest.TestCase):
     def test_creates_the_tables_and_checks_where_they_are(self):
         spark = FakeSpark()
         with self.assertLogs("sql", "INFO"):
-            self.assertEqual(self.create(spark), ["cat.bronze.tmdb_movies", "cat.bronze.musicbrainz_release_groups"])
-        self.assertEqual(len(spark.statements), 4)
+            self.assertEqual(self.create(spark), ["cat.bronze.tmdb_movies", "cat.bronze.musicbrainz_release_groups",
+                                                  "cat.bronze.listenbrainz_release_group_popularity"])
+        self.assertEqual(len(spark.statements), 6)
         self.assertIn("CREATE TABLE IF NOT EXISTS cat.bronze.tmdb_movies", spark.statements[0])
         self.assertEqual(spark.statements[1], "DESCRIBE DETAIL cat.bronze.tmdb_movies")
 
@@ -152,9 +158,8 @@ class LoadTest(unittest.TestCase):
         spark = FakeSpark()
         with self.assertLogs("sql", "INFO"):
             loaded = self.load(spark)
-        self.assertEqual(loaded, {"cat.bronze.tmdb_movies": {"num_inserted_rows": 3},
-                                  "cat.bronze.musicbrainz_release_groups": {"num_inserted_rows": 3}})
-        self.assertEqual([s.count("COPY INTO cat.bronze.") for s in spark.statements], [1, 1])
+        self.assertEqual(loaded, {f"cat.bronze.{name}": {"num_inserted_rows": 3} for name in sql.BRONZE_TABLES})
+        self.assertEqual([s.count("COPY INTO cat.bronze.") for s in spark.statements], [1, 1, 1])
 
     def test_landing_must_be_an_abfss_path(self):
         for landing in ("", "/tmp/landing", f"{LANDING}' OR '1"):
@@ -279,6 +284,17 @@ class SilverStatementTest(unittest.TestCase):
         self.assertEqual(column_list(insert), columns("artist", "silver"))
         self.assertIn("LEFT ANTI JOIN cat.silver.artist AS t ON t.artist_id = s.artist_id AND t.is_current", insert)
 
+    def test_listenbrainz_metric_load(self):
+        self.assertEqual(columns("release_group_metric_daily", "silver"), [
+            "release_group_id", "snapshot_date", "listen_count", "listener_count", "batch_id", "_loaded_at"])
+        self.assertIn("PRIMARY KEY (release_group_id, snapshot_date)", create("silver", "release_group_metric_daily"))
+        steps = sql.statements(sql.render("silver/load", "release_group_metric_daily", catalog="cat", batch_id="B1"))
+        self.assertEqual(len(steps), 1)
+        self.assertIn("FROM cat.bronze.listenbrainz_release_group_popularity", steps[0])
+        self.assertIn("total_listen_count IS NOT NULL", steps[0])  # albums without ListenBrainz data
+        self.assertIn("WHEN MATCHED AND s.batch_id > t.batch_id THEN UPDATE", steps[0])
+        self.assertEqual(column_list(steps[0]), columns("release_group_metric_daily", "silver"))
+
     def test_metric_load_and_the_load_log(self):
         steps = sql.statements(sql.render("silver/load", "movie_metric_daily", catalog="cat", batch_id="B1"))
         self.assertEqual(len(steps), 1)
@@ -303,6 +319,7 @@ class SilverTest(unittest.TestCase):
         self.assertEqual(loaded, {
             "cat.silver.movie": {"batches": 2}, "cat.silver.movie_metric_daily": {"batches": 1},
             "cat.silver.release_group": {"batches": 0}, "cat.silver.artist": {"batches": 0},
+            "cat.silver.release_group_metric_daily": {"batches": 0},
             "cat.silver.genre": {"rows": 2}, "cat.silver.movie_genre": {"rows": 2},
             "cat.silver.release_group_genre": {"rows": 2}, "cat.silver.release_group_artist": {"rows": 2}})
         logged = [s for s in spark.statements if "INSERT INTO cat.silver.load_log" in s]

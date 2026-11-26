@@ -26,6 +26,8 @@ DAG = {
     "silver_release_group_genre": {"silver_release_group", "silver_genre"},
     "silver_release_group_artist": {"silver_release_group", "silver_artist"},
     "ingest_listenbrainz": {"silver_release_group"},  # looks up the albums known to silver
+    "bronze_listenbrainz_release_group_popularity": {"ingest_listenbrainz", "setup_tables"},
+    "silver_release_group_metric_daily": {"bronze_listenbrainz_release_group_popularity"},
 }
 
 try:

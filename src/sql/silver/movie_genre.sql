@@ -1,5 +1,5 @@
 -- Silver table linking movies to genres, Type 1 (current state only): the genres of each movie's latest TMDB row.
--- Created if missing by: pipeline.py silver. Rebuilt on every run from bronze.tmdb_movies
+-- Created if missing by: pipeline.py setup. Rebuilt on every run from bronze.tmdb_movies
 -- (silver/load/movie_genre.sql).
 CREATE TABLE IF NOT EXISTS ${catalog}.silver.movie_genre (
   movie_id    BIGINT     NOT NULL COMMENT 'TMDB id (silver.movie)',

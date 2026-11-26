@@ -103,6 +103,18 @@ resources:
           spark_python_task:
             python_file: ./src/pipeline.py
             parameters: ["--set", "BRONZE_ROOT=${var.bronze_root}", "bronze", "--table", "musicbrainz_release_groups"]
+        - task_key: bronze_listenbrainz_release_group_popularity
+          depends_on:
+            - task_key: ingest_listenbrainz
+            - task_key: setup_tables
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 900
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["--set", "BRONZE_ROOT=${var.bronze_root}",
+                         "bronze", "--table", "listenbrainz_release_group_popularity"]
         - task_key: silver_movie   # SCD2, incremental
           depends_on:
             - task_key: bronze_tmdb_movies
@@ -143,6 +155,16 @@ resources:
           spark_python_task:
             python_file: ./src/pipeline.py
             parameters: ["silver", "--table", "artist"]
+        - task_key: silver_release_group_metric_daily   # incremental: daily ListenBrainz listen counts
+          depends_on:
+            - task_key: bronze_listenbrainz_release_group_popularity
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 1800
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["silver", "--table", "release_group_metric_daily"]
         - task_key: silver_genre   # full load, from both sources
           depends_on:
             - task_key: bronze_tmdb_movies
