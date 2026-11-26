@@ -4,7 +4,7 @@ import sys
 import tempfile
 import types
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest import mock
 
 SRC = os.path.join(os.path.dirname(__file__), "..", "src")
@@ -20,6 +20,15 @@ def fake_module(**functions):
     return types.SimpleNamespace(**functions)
 
 
+def clock(utc: datetime):
+    """Freeze the time of ingest.batch (default dt and batch id) at `utc`."""
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return utc.astimezone(tz)
+    return mock.patch.object(batch, "datetime", Clock)
+
+
 class ParserTest(unittest.TestCase):
     def test_dates(self):
         args = pipeline.parser().parse_args(["ingest", "--source", "tmdb", "--date", "2026-11-24"])
@@ -31,16 +40,11 @@ class ParserTest(unittest.TestCase):
 
     def test_default_date_is_today_in_vietnam(self):
         def at(utc):
-            class Clock(datetime):
-                @classmethod
-                def now(cls, tz=None):
-                    return utc.astimezone(tz)
-            with mock.patch.object(pipeline, "datetime", Clock):
+            with clock(utc):
                 return pipeline._date("")
         # 02:00 on 27/11 in Vietnam (the daily schedule) is still 26/11 in UTC
         self.assertEqual(at(datetime(2026, 11, 26, 19, 0, tzinfo=timezone.utc)), "2026-11-27")
         self.assertEqual(at(datetime(2026, 11, 26, 16, 59, tzinfo=timezone.utc)), "2026-11-26")
-        self.assertEqual(pipeline.VIETNAM.utcoffset(None), timedelta(hours=7))
 
     def test_unknown_tasks_are_rejected(self):
         for argv in (["recommend"], ["transform"], ["ingest", "--source", "kafka"]):
@@ -100,7 +104,19 @@ class IngestTest(unittest.TestCase):
         self.assertEqual([ds for ds, _ in seen], ["2026-11-24", "2026-11-24"])
         self.assertNotEqual(seen[0][1], seen[1][1])
         for _, batch_id in seen:
-            self.assertRegex(batch_id, r"^\d{8}T\d{6}Z-[0-9a-f]{6}$")
+            self.assertRegex(batch_id, r"^\d{8}T\d{6}-[0-9a-f]{6}$")
+
+    def test_default_dt_and_batch_id_show_the_same_day(self):
+        seen = []
+        mods = {"ingest.tmdb": fake_module(run=lambda ds, batch_id: seen.append((ds, batch_id)))}
+        import ingest
+        with clock(datetime(2026, 11, 26, 19, 0, 5, tzinfo=timezone.utc)), mock.patch.dict(sys.modules, mods), \
+                mock.patch.object(config, "MOVIE_SOURCE", "tmdb"), \
+                mock.patch.object(ingest, "tmdb", mods["ingest.tmdb"], create=True):
+            pipeline.main(["ingest", "--source", "tmdb"])
+        ds, batch_id = seen[0]
+        self.assertEqual(ds, "2026-11-27")
+        self.assertRegex(batch_id, r"^20261127T020005-[0-9a-f]{6}$")
 
     def test_missing_tmdb_key_succeeds_and_keeps_the_folder_readable(self):
         def no_key(ds, batch_id):
