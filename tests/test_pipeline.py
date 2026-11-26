@@ -70,21 +70,33 @@ class ParserTest(unittest.TestCase):
 
 
 class TablesTest(unittest.TestCase):
-    def run_layer(self, layer):
-        session, calls = object(), []
+    def run_with(self, argv, function):
+        """Run pipeline.py with `argv`, faking Spark and sql.<function>; returns (result, the call's arguments)."""
+        session = object()
         pyspark_sql = types.SimpleNamespace(SparkSession=types.SimpleNamespace(
             builder=types.SimpleNamespace(getOrCreate=lambda: session)))
         with mock.patch.dict(sys.modules, {"pyspark": types.ModuleType("pyspark"), "pyspark.sql": pyspark_sql}), \
-                mock.patch(f"sql.create_{layer}_tables", side_effect=lambda s: calls.append(("create", s))), \
-                mock.patch(f"sql.load_{layer}_tables", side_effect=lambda s: calls.append(("load", s)) or {"t": 1}):
-            self.assertEqual(pipeline.main([layer]), {"t": 1})
-        self.assertEqual(calls, [("create", session), ("load", session)])
+                mock.patch(f"sql.{function}", return_value={"t": 1}) as fake:
+            result = pipeline.main(argv)
+        fake.assert_called_once()
+        self.assertIs(fake.call_args.args[0], session)
+        return result, fake.call_args.args[1:]
 
-    def test_creates_then_loads_the_bronze_tables(self):
-        self.run_layer("bronze")
+    def test_setup_creates_every_table(self):
+        self.assertEqual(self.run_with(["setup"], "create_tables"), ({"t": 1}, ()))
 
-    def test_creates_then_loads_the_silver_tables(self):
-        self.run_layer("silver")
+    def test_one_table_or_the_whole_layer(self):
+        self.assertEqual(self.run_with(["bronze", "--table", "tmdb_movies"], "load_bronze_table"),
+                         ({"t": 1}, ("tmdb_movies",)))
+        self.assertEqual(self.run_with(["bronze"], "load_bronze_tables"), ({"t": 1}, ()))
+        self.assertEqual(self.run_with(["silver", "--table", "movie_genre"], "load_silver_table"),
+                         ({"t": 1}, ("movie_genre",)))
+        self.assertEqual(self.run_with(["silver"], "load_silver_tables"), ({"t": 1}, ()))
+
+    def test_unknown_table_is_rejected(self):
+        for argv in (["bronze", "--table", "movie"], ["silver", "--table", "load_log"], ["silver", "--table", "x"]):
+            with self.subTest(argv=argv), self.assertRaises(SystemExit), mock.patch("sys.stderr"):
+                pipeline.parser().parse_args(argv)
 
 
 class IngestTest(unittest.TestCase):

@@ -1,4 +1,4 @@
-"""SQL of the Unity Catalog tables, run with spark.sql (pipeline.py bronze, pipeline.py silver).
+"""SQL of the Unity Catalog tables, run with spark.sql (pipeline.py setup, bronze and silver: one job task per table).
 
 src/sql/bronze/<table>.sql       creates <catalog>.bronze.<table>, an external Delta table in <tables root>/<table>
 src/sql/bronze/load/<table>.sql  loads the new files of landing/ into it with COPY INTO
@@ -24,6 +24,7 @@ SILVER_INCREMENTAL = {  # silver table: its bronze table
     "movie": "tmdb_movies", "movie_metric_daily": "tmdb_movies",
     "release_group": "musicbrainz_release_groups", "artist": "musicbrainz_release_groups"}
 SILVER_FULL = ["genre", "movie_genre", "release_group_genre", "release_group_artist"]
+SILVER_LOADED = [*SILVER_INCREMENTAL, *SILVER_FULL]  # every silver table with a load (load_log is written by them)
 BATCH_ID = re.compile(r"[0-9A-Za-z-]+")
 
 
@@ -70,23 +71,34 @@ def create_bronze_tables(spark) -> list:
     return _create(spark, "bronze", BRONZE_TABLES, root, "tables_root")
 
 
-def load_bronze_tables(spark) -> dict:
-    """COPY INTO every bronze table from landing/. Returns {table: COPY INTO result, e.g. num_inserted_rows}."""
+def load_bronze_table(spark, name: str) -> dict:
+    """COPY INTO one bronze table from landing/. Returns the COPY INTO result, e.g. {"num_inserted_rows": 800}."""
     from common import config
+    if name not in BRONZE_TABLES:
+        raise ValueError(f"unknown bronze table {name!r}, expected one of {BRONZE_TABLES}")
     landing = _abfss("BRONZE_ROOT", config.BRONZE_ROOT, "abfss://bronze@<account>.dfs.core.windows.net/landing")
-    loaded = {}
-    for name in BRONZE_TABLES:
-        table = f"{config.UC_CATALOG}.bronze.{name}"
-        row = spark.sql(render("bronze/load", name, catalog=config.UC_CATALOG, landing_root=landing)).first()
-        loaded[table] = row.asDict() if row is not None else {}
-        log.info("%s: COPY INTO %s", table, loaded[table])
-    return loaded
+    row = spark.sql(render("bronze/load", name, catalog=config.UC_CATALOG, landing_root=landing)).first()
+    result = row.asDict() if row is not None else {}
+    log.info("%s.bronze.%s: COPY INTO %s", config.UC_CATALOG, name, result)
+    return result
+
+
+def load_bronze_tables(spark) -> dict:
+    """COPY INTO every bronze table. Returns {table: COPY INTO result}."""
+    from common import config
+    return {f"{config.UC_CATALOG}.bronze.{name}": load_bronze_table(spark, name) for name in BRONZE_TABLES}
 
 
 def create_silver_tables(spark) -> list:
     from common import config
     root = _abfss("SILVER_ROOT", config.SILVER_ROOT, "abfss://silver@<account>.dfs.core.windows.net")
     return _create(spark, "silver", SILVER_TABLES, root, "silver_root")
+
+
+def create_tables(spark) -> list:
+    """Create every bronze and silver table if missing, in one job task (setup_tables) before the loads: tasks
+    running in parallel would otherwise create the shared silver.load_log at the same time."""
+    return create_bronze_tables(spark) + create_silver_tables(spark)
 
 
 def _run(spark, text: str) -> dict:
@@ -100,25 +112,33 @@ def _run(spark, text: str) -> dict:
     return counts
 
 
-def load_silver_tables(spark) -> dict:
-    """Load every new bronze batch into each incremental silver table, oldest first, and record it in
-    silver.load_log; then rebuild the full-load tables. Returns {table: {"batches": n} or {"rows": n}}."""
+def load_silver_table(spark, name: str) -> dict:
+    """Load one silver table. Incremental: every new bronze batch, oldest first, each recorded in silver.load_log;
+    returns {"batches": n}. Full load: rebuilds the table; returns {"rows": n}."""
     from common import config
-    catalog, loaded = config.UC_CATALOG, {}
-    for name, source in SILVER_INCREMENTAL.items():
-        rows = spark.sql(render("silver", "new_batches", catalog=catalog, source=source, table=name)).collect()
-        batches = [r["batch_id"] for r in rows]
-        for batch_id in batches:
-            if not BATCH_ID.fullmatch(batch_id):  # it goes inside a quoted SQL literal
-                raise ValueError(f"unexpected batch_id {batch_id!r} in bronze.{source}")
-            counts = _run(spark, render("silver/load", name, catalog=catalog, batch_id=batch_id))
-            spark.sql(render("silver", "log_batch", catalog=catalog, table=name, batch_id=batch_id,
-                             inserted=str(counts["num_inserted_rows"]), updated=str(counts["num_updated_rows"])))
-            log.info("silver.%s: batch %s, %s rows inserted, %s updated", name, batch_id,
-                     counts["num_inserted_rows"], counts["num_updated_rows"])
-        loaded[f"{catalog}.silver.{name}"] = {"batches": len(batches)}
-    for name in SILVER_FULL:
+    catalog = config.UC_CATALOG
+    if name in SILVER_FULL:
         counts = _run(spark, render("silver/load", name, catalog=catalog))
         log.info("silver.%s: full load, %s rows", name, counts["num_inserted_rows"])
-        loaded[f"{catalog}.silver.{name}"] = {"rows": counts["num_inserted_rows"]}
-    return loaded
+        return {"rows": counts["num_inserted_rows"]}
+    if name not in SILVER_INCREMENTAL:
+        raise ValueError(f"unknown silver table {name!r}, expected one of {SILVER_LOADED}")
+    source = SILVER_INCREMENTAL[name]
+    rows = spark.sql(render("silver", "new_batches", catalog=catalog, source=source, table=name)).collect()
+    batches = [r["batch_id"] for r in rows]
+    for batch_id in batches:
+        if not BATCH_ID.fullmatch(batch_id):  # it goes inside a quoted SQL literal
+            raise ValueError(f"unexpected batch_id {batch_id!r} in bronze.{source}")
+        counts = _run(spark, render("silver/load", name, catalog=catalog, batch_id=batch_id))
+        spark.sql(render("silver", "log_batch", catalog=catalog, table=name, batch_id=batch_id,
+                         inserted=str(counts["num_inserted_rows"]), updated=str(counts["num_updated_rows"])))
+        log.info("silver.%s: batch %s, %s rows inserted, %s updated", name, batch_id,
+                 counts["num_inserted_rows"], counts["num_updated_rows"])
+    return {"batches": len(batches)}
+
+
+def load_silver_tables(spark) -> dict:
+    """Load every silver table: the incremental ones first, then the full loads (they read silver.movie...).
+    Returns {table: {"batches": n} or {"rows": n}}."""
+    from common import config
+    return {f"{config.UC_CATALOG}.silver.{name}": load_silver_table(spark, name) for name in SILVER_LOADED}
