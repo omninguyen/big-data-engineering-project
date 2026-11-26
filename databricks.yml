@@ -58,10 +58,11 @@ resources:
           spark_python_task:
             python_file: ./src/pipeline.py
             parameters: ["--set", "BRONZE_ROOT=${var.bronze_root}", "ingest", "--source", "musicbrainz"]
-        - task_key: bronze_tables   # creates the bronze tables in Unity Catalog if missing (src/sql/bronze/)
+        - task_key: bronze_tables   # creates the bronze tables if missing, then COPY INTO from landing/ (src/sql/)
           depends_on:
             - task_key: ingest_tmdb
             - task_key: ingest_musicbrainz
+          run_if: ALL_DONE   # also when one source failed: load what the other one wrote
           environment_key: default
           max_retries: 1
           min_retry_interval_millis: 60000
