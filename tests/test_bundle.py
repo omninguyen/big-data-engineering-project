@@ -58,6 +58,7 @@ class BundleTest(unittest.TestCase):
         self.assertEqual(dict(args.settings), {"BRONZE_ROOT": "${var.bronze_root}"})  # tables/ goes next to it
         self.assertEqual({d["task_key"] for d in task["depends_on"]}, {"ingest_tmdb", "ingest_musicbrainz"})
         self.assertEqual(task["run_if"], "ALL_DONE")  # one failed source does not hold back the other
+        self.assertIn(task["environment_key"], environments)
 
     def test_silver_tables_after_bronze_tables(self):
         tasks, environments = self.tasks_and_environments()
@@ -68,7 +69,9 @@ class BundleTest(unittest.TestCase):
         self.assertEqual([d["task_key"] for d in task["depends_on"]], ["bronze_tables"])
         self.assertNotIn("run_if", task)  # only after a successful bronze load
         self.assertIn(task["environment_key"], environments)
-        self.assertIn(task["environment_key"], environments)
+
+    def test_job_name(self):
+        self.assertEqual(self.job["name"], "media-platform-pipeline-daily")
 
     def test_daily_at_two_vietnam_time_paused_unless_switched_on(self):
         schedule = self.job["schedule"]

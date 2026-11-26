@@ -30,8 +30,8 @@ targets:
 
 resources:
   jobs:
-    ingest:
-      name: ${bundle.name}-ingest
+    ingest:   # keep this key: renaming it would delete the job and create a new one (new id, no run history)
+      name: media-platform-pipeline-daily   # the name can change freely: same job, id and run history
       max_concurrent_runs: 1
       schedule:
         quartz_cron_expression: "0 0 2 * * ?"   # every day at 02:00
