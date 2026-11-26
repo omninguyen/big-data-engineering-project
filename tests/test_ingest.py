@@ -1,4 +1,4 @@
-"""Ingest error handling (batch/tmdb.py, batch/musicbrainz.py) with fake HTTP sessions and storage."""
+"""Ingest error handling (ingest/tmdb.py, ingest/musicbrainz.py) with fake HTTP sessions and storage."""
 import os
 import sys
 import unittest
@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 try:
     import requests
-    from batch import musicbrainz, tmdb
+    from ingest import musicbrainz, tmdb
 except ImportError:  # requests is not installed in a bare environment
     requests = None
 

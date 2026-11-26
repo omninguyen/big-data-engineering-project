@@ -6,7 +6,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from batch import tmdb_file  # noqa: E402
+from ingest import tmdb_file  # noqa: E402
 
 
 def write(doc):

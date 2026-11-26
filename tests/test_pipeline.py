@@ -52,13 +52,13 @@ class ParserTest(unittest.TestCase):
 
 class IngestTest(unittest.TestCase):
     def ingest(self, source, movie_source="tmdb", tmdb_run=None):
-        mods = {"batch.tmdb": fake_module(run=tmdb_run or (lambda ds: 5)),
-                "batch.tmdb_file": fake_module(run=lambda ds: 7),
-                "batch.sample_movies": fake_module(run=lambda ds: 74),
-                "batch.musicbrainz": fake_module(run=lambda ds: 9)}
-        import batch
+        mods = {"ingest.tmdb": fake_module(run=tmdb_run or (lambda ds: 5)),
+                "ingest.tmdb_file": fake_module(run=lambda ds: 7),
+                "ingest.sample_movies": fake_module(run=lambda ds: 74),
+                "ingest.musicbrainz": fake_module(run=lambda ds: 9)}
+        import ingest
         with mock.patch.dict(sys.modules, mods), mock.patch.object(config, "MOVIE_SOURCE", movie_source), \
-                mock.patch.multiple(batch, create=True, **{k.split(".")[1]: v for k, v in mods.items()}):
+                mock.patch.multiple(ingest, create=True, **{k.split(".")[1]: v for k, v in mods.items()}):
             return pipeline.main(["ingest", "--source", source, "--date", "2026-11-24"])
 
     def test_sources(self):

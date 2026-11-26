@@ -2,7 +2,7 @@
 
 Use when the network blocks Python/curl (TCP+TLS) but a browser still reaches TMDB (e.g. via HTTP/3).
 The file is produced by docs/tmdb_browser_export.js (docs/HUONG_DAN.md) and uploaded to MOVIE_FILE,
-by default <landing volume>/manual/tmdb_movies.json. Same bronze layout as batch/tmdb.py.
+by default <landing volume>/manual/tmdb_movies.json. Same bronze layout as ingest/tmdb.py.
 """
 import json
 import logging
