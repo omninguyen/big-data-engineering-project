@@ -1,0 +1,60 @@
+# Databricks Asset Bundle: deploys src/ and the daily ingest job in one step (databricks bundle deploy).
+# Deployed by .github/workflows/cd.yml as the service principal; the workspace host and BRONZE_ROOT come from
+# GitHub secrets, so this file holds no workspace or storage details.
+#
+#   databricks bundle validate      check this file
+#   databricks bundle deploy        upload src/ and create or update the job
+#   databricks bundle run ingest    run the job now
+bundle:
+  name: media-platform-project
+
+variables:
+  bronze_root:
+    description: The ADLS container bronze, abfss://bronze@<account>.dfs.core.windows.net (GitHub secret BRONZE_ROOT).
+  schedule_status:
+    description: PAUSED or UNPAUSED (GitHub variable INGEST_SCHEDULE). Every deploy applies it to the schedule.
+    default: PAUSED
+
+sync:
+  paths:
+    - src   # only the code that runs on Databricks; tests, docs and CI/CD stay in GitHub
+
+targets:
+  prod:
+    default: true
+    workspace:
+      root_path: /Shared/.bundle/${bundle.name}/${bundle.target}   # deployment state of the bundle
+      file_path: /Shared/${bundle.name}                              # the code: /Shared/<bundle name>/src
+
+resources:
+  jobs:
+    ingest:
+      name: ${bundle.name}-ingest
+      max_concurrent_runs: 1
+      schedule:
+        quartz_cron_expression: "0 0 2 * * ?"   # every day at 02:00
+        timezone_id: Asia/Ho_Chi_Minh
+        pause_status: ${var.schedule_status}
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "3"   # serverless, Python 3.12
+            dependencies:
+              - requests>=2.31,<3
+      tasks:   # independent sources: the two tasks run in parallel
+        - task_key: ingest_tmdb
+          environment_key: default
+          max_retries: 2
+          min_retry_interval_millis: 300000   # 5 minutes
+          timeout_seconds: 1800
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["--set", "BRONZE_ROOT=${var.bronze_root}", "ingest", "--source", "tmdb"]
+        - task_key: ingest_musicbrainz
+          environment_key: default
+          max_retries: 2
+          min_retry_interval_millis: 300000
+          timeout_seconds: 1800
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["--set", "BRONZE_ROOT=${var.bronze_root}", "ingest", "--source", "musicbrainz"]

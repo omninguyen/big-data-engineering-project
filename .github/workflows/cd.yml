@@ -1,10 +1,12 @@
-# Deploys src/ to /Shared/<repository name>/src in the Databricks workspace.
-# Runs when a merged pull request changes src/ (a push to main), or by hand: Actions -> cd -> Run workflow.
-# The tests (ci.yml) run first; nothing is deployed if they fail.
+# Deploys the Databricks Asset Bundle (databricks.yml): src/ to /Shared/<bundle name>/src and the daily ingest job.
+# Runs when a merged pull request changes src/ or databricks.yml (a push to main), or by hand:
+# Actions -> cd -> Run workflow. The tests (ci.yml) run first; nothing is deployed if they fail.
 #
 # Secrets (repository or environment "prod"):
 #   DATABRICKS_HOST                                   workspace URL, https://<workspace>.azuredatabricks.net
 #   DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET   OAuth secret of the deploying service principal
+#   BRONZE_ROOT                                       ADLS container bronze, abfss://bronze@<account>.dfs.core.windows.net
+# Variable (optional): INGEST_SCHEDULE = UNPAUSED switches the daily schedule on. Default PAUSED.
 name: cd
 
 on:
@@ -12,6 +14,7 @@ on:
     branches: [main]
     paths:
       - "src/**"
+      - "databricks.yml"
   workflow_dispatch:
 
 permissions:
@@ -36,7 +39,8 @@ jobs:
       DATABRICKS_AUTH_TYPE: oauth-m2m   # service principal only, no personal access token
       DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
       DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
-      TARGET: /Shared/${{ github.event.repository.name }}/src   # follows a rename of the repository
+      BUNDLE_VAR_bronze_root: ${{ secrets.BRONZE_ROOT }}
+      BUNDLE_VAR_schedule_status: ${{ vars.INGEST_SCHEDULE || 'PAUSED' }}
     steps:
       - uses: actions/checkout@v4
       - uses: databricks/setup-cli@main   # pin a release tag for reproducible deploys
@@ -53,21 +57,26 @@ jobs:
             *) echo "::error::Secret DATABRICKS_HOST is missing or does not start with https://."
                exit 1 ;;
           esac
-          case "$TARGET" in
-            /Shared/[!/]*/src) ;;
-            *) echo "::error::Unexpected deploy path $TARGET (repository name missing)."
+          case "$BUNDLE_VAR_bronze_root" in
+            abfss://*) ;;
+            *) echo "::error::Secret BRONZE_ROOT is missing or does not start with abfss://."
+               exit 1 ;;
+          esac
+          case "$BUNDLE_VAR_schedule_status" in
+            PAUSED|UNPAUSED) ;;
+            *) echo "::error::Variable INGEST_SCHEDULE must be PAUSED or UNPAUSED."
                exit 1 ;;
           esac
 
       - name: Check the connection
         run: databricks current-user me
 
-      - name: Deploy src/ to /Shared
+      - name: Validate the bundle
+        run: databricks bundle validate --target prod
+
+      - name: Deploy src/ and the ingest job
         run: |
-          # Replace the previous upload, so files removed from the repo disappear from the workspace too.
-          if databricks workspace get-status "$TARGET" > /dev/null 2>&1; then
-            databricks workspace delete "$TARGET" --recursive
-          fi
-          databricks workspace mkdirs "$TARGET"
-          databricks workspace import-dir src "$TARGET"
-          databricks workspace list "$TARGET"
+          # Uploads src/ (files removed from the repo are removed from the workspace too) and creates or
+          # updates the job ${bundle.name}-ingest.
+          databricks bundle deploy --target prod
+          databricks bundle summary --target prod

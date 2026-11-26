@@ -1,0 +1,4 @@
+# Local state of databricks bundle commands
+.databricks/
+# Python caches (also kept out of the bundle upload, which skips ignored files)
+__pycache__/
