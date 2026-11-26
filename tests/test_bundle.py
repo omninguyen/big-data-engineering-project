@@ -32,6 +32,8 @@ DAG = {
     "gold_dim_media": {"silver_movie_genre", "silver_release_group_genre"},  # after movie, release_group, genre
     "gold_dim_genre": {"silver_genre"},
     "gold_bridge_media_genre": {"silver_movie_genre", "silver_release_group_genre"},
+    "gold_fact_media_metric_daily": {"silver_movie_metric_daily", "silver_release_group_metric_daily",
+                                     "gold_dim_media"},  # reads gold.dim_media
 }
 
 try:
