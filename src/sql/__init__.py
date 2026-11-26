@@ -18,9 +18,11 @@ from string import Template
 log = logging.getLogger(__name__)
 HERE = os.path.dirname(os.path.abspath(__file__))
 BRONZE_TABLES = ["tmdb_movies", "musicbrainz_release_groups"]
-SILVER_TABLES = ["load_log", "movie", "movie_metric_daily", "genre", "movie_genre"]  # genre before its foreign key
-SILVER_INCREMENTAL = {"movie": "tmdb_movies", "movie_metric_daily": "tmdb_movies"}  # silver table: its bronze table
-SILVER_FULL = ["genre", "movie_genre"]
+SILVER_TABLES = ["load_log", "movie", "movie_metric_daily", "release_group",
+                 "genre", "movie_genre", "release_group_genre"]  # genre before the foreign keys to it
+SILVER_INCREMENTAL = {  # silver table: its bronze table
+    "movie": "tmdb_movies", "movie_metric_daily": "tmdb_movies", "release_group": "musicbrainz_release_groups"}
+SILVER_FULL = ["genre", "movie_genre", "release_group_genre"]
 BATCH_ID = re.compile(r"[0-9A-Za-z-]+")
 
 
