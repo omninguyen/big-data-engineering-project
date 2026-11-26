@@ -25,6 +25,7 @@ DAG = {
     "silver_movie_genre": {"silver_movie", "silver_genre"},
     "silver_release_group_genre": {"silver_release_group", "silver_genre"},
     "silver_release_group_artist": {"silver_release_group", "silver_artist"},
+    "ingest_listenbrainz": {"silver_release_group"},  # looks up the albums known to silver
 }
 
 try:
@@ -86,7 +87,7 @@ class BundleTest(unittest.TestCase):
 
     def test_one_ingest_task_per_source(self):
         tasks, _ = self.tasks_and_environments()
-        for key in ("ingest_tmdb", "ingest_musicbrainz"):
+        for key in ("ingest_tmdb", "ingest_musicbrainz", "ingest_listenbrainz"):
             with self.subTest(task=key):
                 args = pipeline.parser().parse_args(tasks[key]["spark_python_task"]["parameters"])
                 self.assertEqual((args.task, f"ingest_{args.source}"), ("ingest", key))

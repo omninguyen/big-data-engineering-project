@@ -1,13 +1,14 @@
 """Ingest for Databricks: source API -> landing/ of the ADLS container bronze (JSONL), one Python task per source,
 then the bronze and silver tables in Unity Catalog.
 
-  python pipeline.py [--set KEY=VALUE ...] ingest --source tmdb|musicbrainz [--date YYYY-MM-DD]
+  python pipeline.py [--set KEY=VALUE ...] ingest --source tmdb|musicbrainz|listenbrainz [--date YYYY-MM-DD]
   python pipeline.py [--set KEY=VALUE ...] setup
   python pipeline.py [--set KEY=VALUE ...] bronze [--table <bronze table>]
   python pipeline.py [--set KEY=VALUE ...] silver [--table <silver table>]
 
 ingest     TMDB movies -> <bronze>/tmdb/movies/dt=<date>/batch_id=<batch id>/, MusicBrainz albums ->
-           <bronze>/musicbrainz/release_groups/dt=<date>/batch_id=<batch id>/
+           <bronze>/musicbrainz/release_groups/dt=<date>/batch_id=<batch id>/, ListenBrainz listen counts of the
+           albums in silver.release_group -> <bronze>/listenbrainz/release_group_popularity/dt=<date>/batch_id=<id>/
            (bronze: BRONZE_ROOT, e.g. abfss://bronze@<account>.dfs.core.windows.net/landing). Every run is a new batch
            (src/ingest/batch.py), so a rerun of the same --date never overwrites an earlier one.
 setup      creates the bronze and silver tables if missing (src/sql/bronze/, src/sql/silver/): external Delta
@@ -64,6 +65,9 @@ def ingest(args) -> int:
     if args.source == "musicbrainz":
         from ingest import musicbrainz
         return musicbrainz.run(args.date, batch_id)
+    if args.source == "listenbrainz":  # popularity of the albums in silver.release_group
+        from ingest import listenbrainz
+        return listenbrainz.run(args.date, batch_id)
     if config.MOVIE_SOURCE == "file":  # TMDB export uploaded to MOVIE_FILE, by default <bronze>/manual/
         from ingest import tmdb_file
         return tmdb_file.run(args.date, batch_id)
@@ -113,7 +117,7 @@ def parser() -> argparse.ArgumentParser:
                    help="environment setting for src/common/config.py, repeatable")
     sub = p.add_subparsers(dest="task", required=True)
     s = sub.add_parser("ingest", help="source API -> landing/ of the ADLS container bronze (JSONL)")
-    s.add_argument("--source", choices=["tmdb", "musicbrainz"], required=True)
+    s.add_argument("--source", choices=["tmdb", "musicbrainz", "listenbrainz"], required=True)
     s.add_argument("--date", type=_date, default="")
     import sql
     sub.add_parser("setup", help="create the bronze and silver tables in Unity Catalog if missing")
