@@ -30,7 +30,7 @@ def columns(name: str, layer: str = "bronze") -> list:
 
 def column_list(statement: str) -> list:
     """The column list of the INSERT in a statement."""
-    found = re.search(r"INSERT(?: INTO \S+)?\s*\(([^)]*)\)", statement)
+    found = re.search(r"INSERT(?: (?:INTO|OVERWRITE) \S+)?\s*\(([^)]*)\)", statement)
     return [c.strip() for c in found.group(1).split(",")]
 
 
@@ -60,7 +60,7 @@ class FakeSpark:
         elif "EXCEPT" in statement:
             table = re.search(r"table_name = '(\w+)'", statement).group(1)
             rows = [{"batch_id": b} for b in self.batches.get(table, [])]
-        elif re.search(r"^(MERGE|INSERT) INTO", statement, re.M):
+        elif re.search(r"^(MERGE INTO|INSERT INTO|INSERT OVERWRITE)", statement, re.M):
             rows = [result(num_affected_rows=3, num_inserted_rows=2, num_updated_rows=1)]
         return mock.Mock(first=mock.Mock(return_value=rows[0] if rows else None), collect=mock.Mock(return_value=rows))
 
@@ -182,7 +182,8 @@ class SilverStatementTest(unittest.TestCase):
                 for column in key:  # Unity Catalog needs NOT NULL key columns
                     self.assertRegex(text, rf"\n  {column} +\w+ +NOT NULL")
         files = [f[:-len(".sql")] for f in os.listdir(os.path.join(sql.HERE, "silver", "load"))]
-        self.assertEqual(sorted(files), sorted(sql.SILVER_INCREMENTAL))
+        self.assertEqual(sorted(files), sorted([*sql.SILVER_INCREMENTAL, *sql.SILVER_FULL]))
+        self.assertLess(sql.SILVER_TABLES.index("genre"), sql.SILVER_TABLES.index("movie_genre"))  # foreign key
 
     def test_agreed_columns(self):
         self.assertEqual(columns("movie", "silver"), [
@@ -193,6 +194,23 @@ class SilverStatementTest(unittest.TestCase):
             "batch_id", "_loaded_at"])
         self.assertIn("PRIMARY KEY (movie_id, valid_from)", create("silver", "movie"))
         self.assertIn("PRIMARY KEY (movie_id, snapshot_date)", create("silver", "movie_metric_daily"))
+        self.assertEqual(columns("genre", "silver"), ["genre_id", "name", "source", "_loaded_at"])
+        self.assertEqual(columns("movie_genre", "silver"), ["movie_id", "genre_id", "position", "_loaded_at"])
+        self.assertIn("PRIMARY KEY (movie_id, genre_id)", create("silver", "movie_genre"))
+        self.assertIn("FOREIGN KEY (genre_id) REFERENCES cat.silver.genre", create("silver", "movie_genre"))
+
+    def test_full_loads(self):
+        for name in sql.SILVER_FULL:
+            with self.subTest(table=name):
+                steps = sql.statements(sql.render("silver/load", name, catalog="cat"))
+                self.assertEqual(len(steps), 1)
+                self.assertIn(f"INSERT OVERWRITE cat.silver.{name} (", steps[0])  # one write replaces the table
+                self.assertEqual(column_list(steps[0]), columns(name, "silver"))
+                self.assertIn("try_cast(id AS BIGINT) IS NOT NULL", steps[0])  # no sample movies
+                self.assertIn("concat('tmdb:', lower(trim(name)))", steps[0])  # same genre_id in both tables
+        movie_genre = sql.render("silver/load", "movie_genre", catalog="cat")
+        self.assertIn("ORDER BY batch_id DESC", movie_genre)  # the latest row of each movie
+        self.assertIn("movie_id IN (SELECT movie_id FROM cat.silver.movie)", movie_genre)
 
     def test_movie_scd2_load(self):
         steps = sql.statements(sql.render("silver/load", "movie", catalog="cat", batch_id="B1"))
@@ -227,7 +245,8 @@ class SilverTest(unittest.TestCase):
         spark = FakeSpark(batches={"movie": ["B1", "B2"], "movie_metric_daily": ["B2"]})
         with self.assertLogs("sql", "INFO"):
             loaded = self.run_silver(spark)
-        self.assertEqual(loaded, {"cat.silver.movie": 2, "cat.silver.movie_metric_daily": 1})
+        self.assertEqual(loaded, {"cat.silver.movie": {"batches": 2}, "cat.silver.movie_metric_daily": {"batches": 1},
+                                  "cat.silver.genre": {"rows": 2}, "cat.silver.movie_genre": {"rows": 2}})
         logged = [s for s in spark.statements if "INSERT INTO cat.silver.load_log" in s]
         self.assertEqual(len(logged), 3)
         # the row counts of the batch's MERGE and INSERT, summed (the fake gives 2 inserted, 1 updated for each)
@@ -237,11 +256,17 @@ class SilverTest(unittest.TestCase):
         b1 = next(i for i, s in enumerate(spark.statements) if "batch_id = 'B1'" in s)
         b2 = next(i for i, s in enumerate(spark.statements) if "batch_id = 'B2'" in s)
         self.assertLess(b1, b2)
+        full = [i for i, s in enumerate(spark.statements) if "INSERT OVERWRITE" in s]
+        self.assertEqual(len(full), 2)
+        self.assertGreater(min(full), max(i for i, s in enumerate(spark.statements) if "load_log" in s))  # last
 
-    def test_nothing_new_loads_nothing(self):
+    def test_nothing_new_still_rebuilds_the_full_load_tables(self):
         spark = FakeSpark()
-        self.assertEqual(self.run_silver(spark), {"cat.silver.movie": 0, "cat.silver.movie_metric_daily": 0})
+        loaded = self.run_silver(spark)
+        self.assertEqual(loaded["cat.silver.movie"], {"batches": 0})
+        self.assertEqual(loaded["cat.silver.movie_metric_daily"], {"batches": 0})
         self.assertFalse([s for s in spark.statements if re.search(r"^(MERGE|INSERT) INTO", s, re.M)])
+        self.assertEqual(len([s for s in spark.statements if "INSERT OVERWRITE" in s]), 2)
 
     def test_odd_batch_id_or_root_fails(self):
         with self.assertRaises(ValueError):

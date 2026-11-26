@@ -3,8 +3,9 @@
 src/sql/bronze/<table>.sql       creates <catalog>.bronze.<table>, an external Delta table in <tables root>/<table>
 src/sql/bronze/load/<table>.sql  loads the new files of landing/ into it with COPY INTO
 src/sql/silver/<table>.sql       creates <catalog>.silver.<table>, an external Delta table in <silver root>/<table>
-src/sql/silver/load/<table>.sql  loads one bronze batch into it; run once per new batch, oldest first, and recorded
-                                 in silver.load_log (the watermark: a recorded batch is not loaded again)
+src/sql/silver/load/<table>.sql  incremental tables: loads one bronze batch; run once per new batch, oldest first,
+                                 and recorded in silver.load_log (the watermark: a recorded batch is not loaded again)
+                                 full-load tables: rebuilds the whole table, on every run, after the incremental ones
 ${...} placeholders are filled in from common/config.py (UC_CATALOG, BRONZE_TABLES_ROOT, BRONZE_ROOT, SILVER_ROOT),
 so the files hold no workspace or storage details. A file may hold several statements, each ending with ';' at the
 end of a line.
@@ -17,8 +18,9 @@ from string import Template
 log = logging.getLogger(__name__)
 HERE = os.path.dirname(os.path.abspath(__file__))
 BRONZE_TABLES = ["tmdb_movies", "musicbrainz_release_groups"]
-SILVER_TABLES = ["load_log", "movie", "movie_metric_daily"]
+SILVER_TABLES = ["load_log", "movie", "movie_metric_daily", "genre", "movie_genre"]  # genre before its foreign key
 SILVER_INCREMENTAL = {"movie": "tmdb_movies", "movie_metric_daily": "tmdb_movies"}  # silver table: its bronze table
+SILVER_FULL = ["genre", "movie_genre"]
 BATCH_ID = re.compile(r"[0-9A-Za-z-]+")
 
 
@@ -97,7 +99,7 @@ def _run(spark, text: str) -> dict:
 
 def load_silver_tables(spark) -> dict:
     """Load every new bronze batch into each incremental silver table, oldest first, and record it in
-    silver.load_log. Returns {table: number of batches loaded}."""
+    silver.load_log; then rebuild the full-load tables. Returns {table: {"batches": n} or {"rows": n}}."""
     from common import config
     catalog, loaded = config.UC_CATALOG, {}
     for name, source in SILVER_INCREMENTAL.items():
@@ -111,5 +113,9 @@ def load_silver_tables(spark) -> dict:
                              inserted=str(counts["num_inserted_rows"]), updated=str(counts["num_updated_rows"])))
             log.info("silver.%s: batch %s, %s rows inserted, %s updated", name, batch_id,
                      counts["num_inserted_rows"], counts["num_updated_rows"])
-        loaded[f"{catalog}.silver.{name}"] = len(batches)
+        loaded[f"{catalog}.silver.{name}"] = {"batches": len(batches)}
+    for name in SILVER_FULL:
+        counts = _run(spark, render("silver/load", name, catalog=catalog))
+        log.info("silver.%s: full load, %s rows", name, counts["num_inserted_rows"])
+        loaded[f"{catalog}.silver.{name}"] = {"rows": counts["num_inserted_rows"]}
     return loaded
