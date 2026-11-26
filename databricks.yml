@@ -11,6 +11,8 @@ bundle:
 variables:
   bronze_root:
     description: Raw files, abfss://bronze@<account>.dfs.core.windows.net/landing (GitHub secret BRONZE_ROOT).
+  silver_root:
+    description: The ADLS container silver, abfss://silver@<account>.dfs.core.windows.net (GitHub secret SILVER_ROOT).
   schedule_status:
     description: PAUSED or UNPAUSED (GitHub variable INGEST_SCHEDULE). Every deploy applies it to the schedule.
     default: PAUSED
@@ -41,7 +43,7 @@ resources:
             environment_version: "3"   # serverless, Python 3.12
             dependencies:
               - requests>=2.31,<3
-      tasks:   # independent sources: the two ingest tasks run in parallel, then bronze_tables
+      tasks:   # independent sources: the two ingest tasks run in parallel, then bronze_tables, then silver_tables
         - task_key: ingest_tmdb
           environment_key: default
           max_retries: 2
@@ -69,4 +71,14 @@ resources:
           timeout_seconds: 900
           spark_python_task:
             python_file: ./src/pipeline.py
-            parameters: ["--set", "BRONZE_ROOT=${var.bronze_root}", "tables"]
+            parameters: ["--set", "BRONZE_ROOT=${var.bronze_root}", "bronze"]
+        - task_key: silver_tables   # creates the silver tables if missing, then loads the new bronze batches
+          depends_on:
+            - task_key: bronze_tables
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 1800
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["--set", "SILVER_ROOT=${var.silver_root}", "silver"]

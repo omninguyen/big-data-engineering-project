@@ -1,16 +1,20 @@
 """Ingest for Databricks: source API -> landing/ of the ADLS container bronze (JSONL), one Python task per source,
-then the bronze tables in Unity Catalog.
+then the bronze and silver tables in Unity Catalog.
 
   python pipeline.py [--set KEY=VALUE ...] ingest --source tmdb|musicbrainz [--date YYYY-MM-DD]
-  python pipeline.py [--set KEY=VALUE ...] tables
+  python pipeline.py [--set KEY=VALUE ...] bronze
+  python pipeline.py [--set KEY=VALUE ...] silver
 
 ingest     TMDB movies -> <bronze>/tmdb/movies/dt=<date>/batch_id=<batch id>/, MusicBrainz albums ->
            <bronze>/musicbrainz/release_groups/dt=<date>/batch_id=<batch id>/
            (bronze: BRONZE_ROOT, e.g. abfss://bronze@<account>.dfs.core.windows.net/landing). Every run is a new batch
            (src/ingest/batch.py), so a rerun of the same --date never overwrites an earlier one.
-tables     creates the bronze tables if missing (src/sql/bronze/): external Delta tables in tables/, next to
+bronze     creates the bronze tables if missing (src/sql/bronze/): external Delta tables in tables/, next to
            landing/ (BRONZE_ROOT), then loads the new files of landing/ into them with COPY INTO
            (src/sql/bronze/load/). Runs after the ingest tasks.
+silver     creates the silver tables if missing (src/sql/silver/): external Delta tables in the container silver
+           (SILVER_ROOT), then loads every new bronze batch into them, oldest first (src/sql/silver/load/).
+           Runs after bronze.
 --set      settings of src/common/config.py, applied before it is imported. Serverless job tasks have no cluster
            environment variables, so the job passes them as parameters, e.g.
            --set BRONZE_ROOT=abfss://bronze@<account>.dfs.core.windows.net/landing
@@ -76,15 +80,26 @@ def ingest(args) -> int:
         return 0
 
 
-def tables(args) -> dict:
-    import sql
+def _spark():
     from pyspark.sql import SparkSession  # preinstalled on Databricks
-    spark = SparkSession.builder.getOrCreate()
+    return SparkSession.builder.getOrCreate()
+
+
+def bronze(args) -> dict:
+    import sql
+    spark = _spark()
     sql.create_bronze_tables(spark)
     return sql.load_bronze_tables(spark)
 
 
-TASKS = {"ingest": ingest, "tables": tables}
+def silver(args) -> dict:
+    import sql
+    spark = _spark()
+    sql.create_silver_tables(spark)
+    return sql.load_silver_tables(spark)
+
+
+TASKS = {"ingest": ingest, "bronze": bronze, "silver": silver}
 
 
 def parser() -> argparse.ArgumentParser:
@@ -95,7 +110,8 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser("ingest", help="source API -> landing/ of the ADLS container bronze (JSONL)")
     s.add_argument("--source", choices=["tmdb", "musicbrainz"], required=True)
     s.add_argument("--date", type=_date, default="")
-    sub.add_parser("tables", help="create the bronze tables in Unity Catalog if missing and load landing/ into them")
+    sub.add_parser("bronze", help="create the bronze tables in Unity Catalog if missing and load landing/ into them")
+    sub.add_parser("silver", help="create the silver tables if missing and load the new bronze batches into them")
     return p
 
 
