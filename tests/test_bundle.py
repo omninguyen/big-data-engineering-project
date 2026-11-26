@@ -1,4 +1,4 @@
-"""databricks.yml: what the bundle deploys (only src/) and the daily ingest job."""
+"""databricks.yml: what the bundle deploys (only src/) and the daily job, one task per table."""
 import os
 import re
 import sys
@@ -8,6 +8,24 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, os.path.join(ROOT, "src"))
 
 import pipeline  # noqa: E402
+import sql  # noqa: E402
+
+# The job graph: task -> the tasks it waits for. Each path follows the data, source -> bronze -> silver.
+DAG = {
+    "setup_tables": set(),
+    "ingest_tmdb": set(),
+    "ingest_musicbrainz": set(),
+    "bronze_tmdb_movies": {"ingest_tmdb", "setup_tables"},
+    "bronze_musicbrainz_release_groups": {"ingest_musicbrainz", "setup_tables"},
+    "silver_movie": {"bronze_tmdb_movies"},
+    "silver_movie_metric_daily": {"bronze_tmdb_movies"},
+    "silver_release_group": {"bronze_musicbrainz_release_groups"},
+    "silver_artist": {"bronze_musicbrainz_release_groups"},
+    "silver_genre": {"bronze_tmdb_movies", "bronze_musicbrainz_release_groups"},
+    "silver_movie_genre": {"silver_movie", "silver_genre"},
+    "silver_release_group_genre": {"silver_release_group", "silver_genre"},
+    "silver_release_group_artist": {"silver_release_group", "silver_artist"},
+}
 
 try:
     import yaml
@@ -32,43 +50,48 @@ class BundleTest(unittest.TestCase):
 
     def tasks_and_environments(self):
         tasks = {t["task_key"]: t for t in self.job["tasks"]}
-        self.assertEqual(set(tasks), {"ingest_tmdb", "ingest_musicbrainz", "bronze_tables", "silver_tables"})
         return tasks, {e["environment_key"] for e in self.job["environments"]}
 
-    def test_one_task_per_source_running_pipeline_py(self):
+    def test_the_job_graph(self):
         tasks, environments = self.tasks_and_environments()
-        for key in ("ingest_tmdb", "ingest_musicbrainz"):
-            task = tasks[key]
+        self.assertEqual({key: {d["task_key"] for d in task.get("depends_on", [])} for key, task in tasks.items()},
+                         DAG)
+        for key, task in tasks.items():
             with self.subTest(task=key):
-                python = task["spark_python_task"]
-                self.assertEqual(python["python_file"], "./src/pipeline.py")
-                args = pipeline.parser().parse_args(python["parameters"])  # what pipeline.py accepts
-                self.assertEqual((args.task, f"ingest_{args.source}"), ("ingest", key))
-                self.assertEqual(dict(args.settings), {"BRONZE_ROOT": "${var.bronze_root}"})
-                self.assertNotIn("depends_on", task)  # the sources run in parallel
+                self.assertEqual(task["spark_python_task"]["python_file"], "./src/pipeline.py")
+                pipeline.parser().parse_args(task["spark_python_task"]["parameters"])  # what pipeline.py accepts
                 self.assertIn(task["environment_key"], environments)  # required on serverless
                 self.assertGreaterEqual(task["max_retries"], 1)
+                self.assertNotIn("run_if", task)  # a task runs only when the tasks it waits for succeeded
+
+    def test_one_task_per_table(self):
+        tasks, _ = self.tasks_and_environments()
+        loads = {}
+        for key, task in tasks.items():
+            args = pipeline.parser().parse_args(task["spark_python_task"]["parameters"])
+            if args.task in ("bronze", "silver"):
+                self.assertEqual(key, f"{args.task}_{args.table}")
+                self.assertEqual(dict(args.settings), {"BRONZE_ROOT": "${var.bronze_root}"} if args.task == "bronze"
+                                 else {})  # silver reads and writes Unity Catalog tables only
+                loads.setdefault(args.task, []).append(args.table)
+        self.assertEqual(sorted(loads["bronze"]), sorted(sql.BRONZE_TABLES))
+        self.assertEqual(sorted(loads["silver"]), sorted(sql.SILVER_LOADED))
+
+    def test_setup_creates_the_tables_first(self):
+        tasks, _ = self.tasks_and_environments()
+        args = pipeline.parser().parse_args(tasks["setup_tables"]["spark_python_task"]["parameters"])
+        self.assertEqual(args.task, "setup")
+        self.assertEqual(dict(args.settings),
+                         {"BRONZE_ROOT": "${var.bronze_root}", "SILVER_ROOT": "${var.silver_root}"})
+
+    def test_one_ingest_task_per_source(self):
+        tasks, _ = self.tasks_and_environments()
+        for key in ("ingest_tmdb", "ingest_musicbrainz"):
+            with self.subTest(task=key):
+                args = pipeline.parser().parse_args(tasks[key]["spark_python_task"]["parameters"])
+                self.assertEqual((args.task, f"ingest_{args.source}"), ("ingest", key))
+                self.assertEqual(dict(args.settings), {"BRONZE_ROOT": "${var.bronze_root}"})
         self.assertTrue(os.path.isfile(os.path.join(ROOT, "src", "pipeline.py")))
-
-    def test_bronze_tables_after_both_ingests(self):
-        tasks, environments = self.tasks_and_environments()
-        task = tasks["bronze_tables"]
-        args = pipeline.parser().parse_args(task["spark_python_task"]["parameters"])
-        self.assertEqual(args.task, "bronze")
-        self.assertEqual(dict(args.settings), {"BRONZE_ROOT": "${var.bronze_root}"})  # tables/ goes next to it
-        self.assertEqual({d["task_key"] for d in task["depends_on"]}, {"ingest_tmdb", "ingest_musicbrainz"})
-        self.assertEqual(task["run_if"], "ALL_DONE")  # one failed source does not hold back the other
-        self.assertIn(task["environment_key"], environments)
-
-    def test_silver_tables_after_bronze_tables(self):
-        tasks, environments = self.tasks_and_environments()
-        task = tasks["silver_tables"]
-        args = pipeline.parser().parse_args(task["spark_python_task"]["parameters"])
-        self.assertEqual(args.task, "silver")
-        self.assertEqual(dict(args.settings), {"SILVER_ROOT": "${var.silver_root}"})
-        self.assertEqual([d["task_key"] for d in task["depends_on"]], ["bronze_tables"])
-        self.assertNotIn("run_if", task)  # only after a successful bronze load
-        self.assertIn(task["environment_key"], environments)
 
     def test_job_name(self):
         self.assertEqual(self.job["name"], "media-platform-pipeline-daily")

@@ -43,7 +43,18 @@ resources:
             environment_version: "3"   # serverless, Python 3.12
             dependencies:
               - requests>=2.31,<3
-      tasks:   # independent sources: the two ingest tasks run in parallel, then bronze_tables, then silver_tables
+      # One task per table, so the job graph shows the path of the data: source -> bronze -> silver.
+      # The TMDB and MusicBrainz paths are independent: when one source fails, the other still reaches silver,
+      # and the next run catches up (COPY INTO and silver.load_log only take what is new).
+      tasks:
+        - task_key: setup_tables   # creates the missing bronze and silver tables (src/sql/)
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 900
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["--set", "BRONZE_ROOT=${var.bronze_root}", "--set", "SILVER_ROOT=${var.silver_root}", "setup"]
         - task_key: ingest_tmdb
           environment_key: default
           max_retries: 2
@@ -60,25 +71,109 @@ resources:
           spark_python_task:
             python_file: ./src/pipeline.py
             parameters: ["--set", "BRONZE_ROOT=${var.bronze_root}", "ingest", "--source", "musicbrainz"]
-        - task_key: bronze_tables   # creates the bronze tables if missing, then COPY INTO from landing/ (src/sql/)
+        - task_key: bronze_tmdb_movies   # COPY INTO from landing/
           depends_on:
             - task_key: ingest_tmdb
-            - task_key: ingest_musicbrainz
-          run_if: ALL_DONE   # also when one source failed: load what the other one wrote
+            - task_key: setup_tables
           environment_key: default
           max_retries: 1
           min_retry_interval_millis: 60000
           timeout_seconds: 900
           spark_python_task:
             python_file: ./src/pipeline.py
-            parameters: ["--set", "BRONZE_ROOT=${var.bronze_root}", "bronze"]
-        - task_key: silver_tables   # creates the silver tables if missing, then loads the new bronze batches
+            parameters: ["--set", "BRONZE_ROOT=${var.bronze_root}", "bronze", "--table", "tmdb_movies"]
+        - task_key: bronze_musicbrainz_release_groups
           depends_on:
-            - task_key: bronze_tables
+            - task_key: ingest_musicbrainz
+            - task_key: setup_tables
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 900
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["--set", "BRONZE_ROOT=${var.bronze_root}", "bronze", "--table", "musicbrainz_release_groups"]
+        - task_key: silver_movie   # SCD2, incremental
+          depends_on:
+            - task_key: bronze_tmdb_movies
           environment_key: default
           max_retries: 1
           min_retry_interval_millis: 60000
           timeout_seconds: 1800
           spark_python_task:
             python_file: ./src/pipeline.py
-            parameters: ["--set", "SILVER_ROOT=${var.silver_root}", "silver"]
+            parameters: ["silver", "--table", "movie"]
+        - task_key: silver_movie_metric_daily   # incremental
+          depends_on:
+            - task_key: bronze_tmdb_movies
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 1800
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["silver", "--table", "movie_metric_daily"]
+        - task_key: silver_release_group   # SCD2, incremental
+          depends_on:
+            - task_key: bronze_musicbrainz_release_groups
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 1800
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["silver", "--table", "release_group"]
+        - task_key: silver_artist   # SCD2, incremental
+          depends_on:
+            - task_key: bronze_musicbrainz_release_groups
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 1800
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["silver", "--table", "artist"]
+        - task_key: silver_genre   # full load, from both sources
+          depends_on:
+            - task_key: bronze_tmdb_movies
+            - task_key: bronze_musicbrainz_release_groups
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 1800
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["silver", "--table", "genre"]
+        - task_key: silver_movie_genre   # full load
+          depends_on:
+            - task_key: silver_movie
+            - task_key: silver_genre
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 1800
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["silver", "--table", "movie_genre"]
+        - task_key: silver_release_group_genre   # full load
+          depends_on:
+            - task_key: silver_release_group
+            - task_key: silver_genre
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 1800
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["silver", "--table", "release_group_genre"]
+        - task_key: silver_release_group_artist   # full load
+          depends_on:
+            - task_key: silver_release_group
+            - task_key: silver_artist
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 1800
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["silver", "--table", "release_group_artist"]

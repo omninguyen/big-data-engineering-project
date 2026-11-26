@@ -2,19 +2,21 @@
 then the bronze and silver tables in Unity Catalog.
 
   python pipeline.py [--set KEY=VALUE ...] ingest --source tmdb|musicbrainz [--date YYYY-MM-DD]
-  python pipeline.py [--set KEY=VALUE ...] bronze
-  python pipeline.py [--set KEY=VALUE ...] silver
+  python pipeline.py [--set KEY=VALUE ...] setup
+  python pipeline.py [--set KEY=VALUE ...] bronze [--table <bronze table>]
+  python pipeline.py [--set KEY=VALUE ...] silver [--table <silver table>]
 
 ingest     TMDB movies -> <bronze>/tmdb/movies/dt=<date>/batch_id=<batch id>/, MusicBrainz albums ->
            <bronze>/musicbrainz/release_groups/dt=<date>/batch_id=<batch id>/
            (bronze: BRONZE_ROOT, e.g. abfss://bronze@<account>.dfs.core.windows.net/landing). Every run is a new batch
            (src/ingest/batch.py), so a rerun of the same --date never overwrites an earlier one.
-bronze     creates the bronze tables if missing (src/sql/bronze/): external Delta tables in tables/, next to
-           landing/ (BRONZE_ROOT), then loads the new files of landing/ into them with COPY INTO
-           (src/sql/bronze/load/). Runs after the ingest tasks.
-silver     creates the silver tables if missing (src/sql/silver/): external Delta tables in the container silver
-           (SILVER_ROOT), then loads every new bronze batch into the incremental ones, oldest first, and rebuilds
-           the full-load ones (src/sql/silver/load/). Runs after bronze.
+setup      creates the bronze and silver tables if missing (src/sql/bronze/, src/sql/silver/): external Delta
+           tables in tables/ next to landing/ (BRONZE_ROOT) and in the container silver (SILVER_ROOT).
+bronze     loads the new files of landing/ into a bronze table with COPY INTO (src/sql/bronze/load/).
+silver     loads a silver table (src/sql/silver/load/): every new bronze batch, oldest first, for an incremental
+           table; a rebuild for a full-load table.
+           Without --table, bronze and silver load every table of their layer. The job runs one task per table
+           (databricks.yml), so the data path is visible in the job graph.
 --set      settings of src/common/config.py, applied before it is imported. Serverless job tasks have no cluster
            environment variables, so the job passes them as parameters, e.g.
            --set BRONZE_ROOT=abfss://bronze@<account>.dfs.core.windows.net/landing
@@ -85,21 +87,24 @@ def _spark():
     return SparkSession.builder.getOrCreate()
 
 
+def setup(args) -> list:
+    import sql
+    return sql.create_tables(_spark())
+
+
 def bronze(args) -> dict:
     import sql
     spark = _spark()
-    sql.create_bronze_tables(spark)
-    return sql.load_bronze_tables(spark)
+    return sql.load_bronze_table(spark, args.table) if args.table else sql.load_bronze_tables(spark)
 
 
 def silver(args) -> dict:
     import sql
     spark = _spark()
-    sql.create_silver_tables(spark)
-    return sql.load_silver_tables(spark)
+    return sql.load_silver_table(spark, args.table) if args.table else sql.load_silver_tables(spark)
 
 
-TASKS = {"ingest": ingest, "bronze": bronze, "silver": silver}
+TASKS = {"ingest": ingest, "setup": setup, "bronze": bronze, "silver": silver}
 
 
 def parser() -> argparse.ArgumentParser:
@@ -110,8 +115,12 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser("ingest", help="source API -> landing/ of the ADLS container bronze (JSONL)")
     s.add_argument("--source", choices=["tmdb", "musicbrainz"], required=True)
     s.add_argument("--date", type=_date, default="")
-    sub.add_parser("bronze", help="create the bronze tables in Unity Catalog if missing and load landing/ into them")
-    sub.add_parser("silver", help="create the silver tables if missing and load the new bronze batches into them")
+    import sql
+    sub.add_parser("setup", help="create the bronze and silver tables in Unity Catalog if missing")
+    s = sub.add_parser("bronze", help="load the new files of landing/ into a bronze table (default: all)")
+    s.add_argument("--table", choices=sql.BRONZE_TABLES)
+    s = sub.add_parser("silver", help="load a silver table from bronze (default: all)")
+    s.add_argument("--table", choices=sql.SILVER_LOADED)
     return p
 
 

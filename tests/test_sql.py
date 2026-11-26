@@ -339,5 +339,43 @@ class SilverTest(unittest.TestCase):
             self.run_silver(spark)
 
 
+
+class OneTableTest(unittest.TestCase):
+    """One job task per table: setup creates every table, then each task loads one."""
+    def patched(self):
+        return mock.patch.multiple(config, BRONZE_TABLES_ROOT=ROOT, BRONZE_ROOT=LANDING, SILVER_ROOT=SILVER,
+                                   UC_CATALOG="cat")
+
+    def test_setup_creates_bronze_then_silver(self):
+        spark = FakeSpark()
+        with self.patched(), self.assertLogs("sql", "INFO"):
+            tables = sql.create_tables(spark)
+        self.assertEqual(tables, [f"cat.bronze.{t}" for t in sql.BRONZE_TABLES] +
+                         [f"cat.silver.{t}" for t in sql.SILVER_TABLES])
+
+    def test_one_bronze_table(self):
+        spark = FakeSpark()
+        with self.patched(), self.assertLogs("sql", "INFO"):
+            self.assertEqual(sql.load_bronze_table(spark, "tmdb_movies"), {"num_inserted_rows": 3})
+        self.assertEqual(len(spark.statements), 1)
+        self.assertIn("COPY INTO cat.bronze.tmdb_movies", spark.statements[0])
+
+    def test_one_silver_table(self):
+        spark = FakeSpark(batches={"movie": ["B1"], "release_group": ["B1"]})
+        with self.patched(), self.assertLogs("sql", "INFO"):
+            self.assertEqual(sql.load_silver_table(spark, "movie"), {"batches": 1})
+        self.assertFalse([s for s in spark.statements if "release_group" in s])  # only its own batches
+        spark = FakeSpark()
+        with self.patched(), self.assertLogs("sql", "INFO"):
+            self.assertEqual(sql.load_silver_table(spark, "genre"), {"rows": 2})
+        self.assertEqual(len(spark.statements), 1)
+
+    def test_unknown_table_fails(self):
+        with self.patched():
+            for load, name in ((sql.load_bronze_table, "movie"), (sql.load_silver_table, "load_log")):
+                with self.subTest(name=name), self.assertRaises(ValueError):
+                    load(FakeSpark(), name)
+
+
 if __name__ == "__main__":
     unittest.main()
