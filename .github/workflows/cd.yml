@@ -1,4 +1,4 @@
-# Deploys src/ to /Shared/big-data-engineering-project/src in the Databricks workspace.
+# Deploys src/ to /Shared/<repository name>/src in the Databricks workspace.
 # Runs when a merged pull request changes src/ (a push to main), or by hand: Actions -> cd -> Run workflow.
 # The tests (ci.yml) run first; nothing is deployed if they fail.
 #
@@ -36,7 +36,7 @@ jobs:
       DATABRICKS_AUTH_TYPE: oauth-m2m   # service principal only, no personal access token
       DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
       DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
-      TARGET: /Shared/big-data-engineering-project/src
+      TARGET: /Shared/${{ github.event.repository.name }}/src   # follows a rename of the repository
     steps:
       - uses: actions/checkout@v4
       - uses: databricks/setup-cli@main   # pin a release tag for reproducible deploys
@@ -51,6 +51,11 @@ jobs:
           case "$DATABRICKS_HOST" in
             https://*) ;;
             *) echo "::error::Secret DATABRICKS_HOST is missing or does not start with https://."
+               exit 1 ;;
+          esac
+          case "$TARGET" in
+            /Shared/[!/]*/src) ;;
+            *) echo "::error::Unexpected deploy path $TARGET (repository name missing)."
                exit 1 ;;
           esac
 
