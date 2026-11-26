@@ -208,13 +208,19 @@ class SilverStatementTest(unittest.TestCase):
                          ["release_group_id", "genre_id", "position", "tag_count", "_loaded_at"])
         self.assertIn("PRIMARY KEY (release_group_id, genre_id)", create("silver", "release_group_genre"))
         self.assertIn("FOREIGN KEY (genre_id) REFERENCES cat.silver.genre", create("silver", "release_group_genre"))
+        self.assertEqual(columns("artist", "silver"), [
+            "artist_id", "name", "checksum", "valid_from", "valid_to", "is_current", "batch_id", "_loaded_at"])
+        self.assertIn("PRIMARY KEY (artist_id, valid_from)", create("silver", "artist"))
+        self.assertEqual(columns("release_group_artist", "silver"), [
+            "release_group_id", "artist_id", "position", "credited_name", "join_phrase", "_loaded_at"])
+        self.assertIn("PRIMARY KEY (release_group_id, artist_id)", create("silver", "release_group_artist"))
 
     def test_full_loads(self):
         for name in sql.SILVER_FULL:
             with self.subTest(table=name):
                 steps = sql.statements(sql.render("silver/load", name, catalog="cat"))
                 self.assertEqual(len(steps), 1)
-                self.assertIn(f"INSERT OVERWRITE cat.silver.{name} (", steps[0])  # one write replaces the table
+                self.assertRegex(steps[0], rf"INSERT OVERWRITE cat\.silver\.{name}\s*\(")  # one write replaces it
                 self.assertEqual(column_list(steps[0]), columns(name, "silver"))
         genre = sql.render("silver/load", "genre", catalog="cat")
         movie_genre = sql.render("silver/load", "movie_genre", catalog="cat")
@@ -229,6 +235,11 @@ class SilverStatementTest(unittest.TestCase):
         self.assertIn("WHERE batch_id = latest_batch_id", album_genre)  # the latest batch of each album
         self.assertIn("JOIN genres AS g ON f.genre = g.genre", album_genre)  # only the searched genres
         self.assertIn("release_group_id IN (SELECT release_group_id FROM cat.silver.release_group)", album_genre)
+        album_artist = sql.render("silver/load", "release_group_artist", catalog="cat")
+        self.assertIn("posexplode(artist_credit) AS (position, credit)", album_artist)  # credit order kept
+        self.assertIn("WHERE rn = 1", album_artist)  # the latest row of each album
+        self.assertIn("release_group_id IN (SELECT release_group_id FROM cat.silver.release_group)", album_artist)
+        self.assertIn("artist_id IN (SELECT artist_id FROM cat.silver.artist)", album_artist)
 
     def test_movie_scd2_load(self):
         steps = sql.statements(sql.render("silver/load", "movie", catalog="cat", batch_id="B1"))
@@ -255,6 +266,19 @@ class SilverStatementTest(unittest.TestCase):
         self.assertEqual(column_list(insert), columns("release_group", "silver"))
         self.assertIn("LEFT ANTI JOIN cat.silver.release_group AS t", insert)
 
+    def test_artist_scd2_load(self):
+        steps = sql.statements(sql.render("silver/load", "artist", catalog="cat", batch_id="B1"))
+        self.assertEqual(len(steps), 3)
+        view, close, insert = steps
+        self.assertIn("explode(artist_credit) AS credit", view)
+        self.assertIn("WHERE batch_id = 'B1' AND id <> ''", view)
+        self.assertIn("WHERE credit.artist.id <> ''", view)  # a credit without an artist cannot be linked
+        self.assertIn("row_number() OVER (PARTITION BY credit.artist.id", view)  # one row per artist
+        self.assertIn("sha2(to_json(struct(name)), 256)", view)
+        self.assertIn("WHEN MATCHED AND t.checksum <> s.checksum", close)
+        self.assertEqual(column_list(insert), columns("artist", "silver"))
+        self.assertIn("LEFT ANTI JOIN cat.silver.artist AS t ON t.artist_id = s.artist_id AND t.is_current", insert)
+
     def test_metric_load_and_the_load_log(self):
         steps = sql.statements(sql.render("silver/load", "movie_metric_daily", catalog="cat", batch_id="B1"))
         self.assertEqual(len(steps), 1)
@@ -278,9 +302,9 @@ class SilverTest(unittest.TestCase):
             loaded = self.run_silver(spark)
         self.assertEqual(loaded, {
             "cat.silver.movie": {"batches": 2}, "cat.silver.movie_metric_daily": {"batches": 1},
-            "cat.silver.release_group": {"batches": 0},
+            "cat.silver.release_group": {"batches": 0}, "cat.silver.artist": {"batches": 0},
             "cat.silver.genre": {"rows": 2}, "cat.silver.movie_genre": {"rows": 2},
-            "cat.silver.release_group_genre": {"rows": 2}})
+            "cat.silver.release_group_genre": {"rows": 2}, "cat.silver.release_group_artist": {"rows": 2}})
         logged = [s for s in spark.statements if "INSERT INTO cat.silver.load_log" in s]
         self.assertEqual(len(logged), 3)
         # the row counts of the batch's MERGE and INSERT, summed (the fake gives 2 inserted, 1 updated for each)
@@ -291,7 +315,7 @@ class SilverTest(unittest.TestCase):
         b2 = next(i for i, s in enumerate(spark.statements) if "batch_id = 'B2'" in s)
         self.assertLess(b1, b2)
         full = [i for i, s in enumerate(spark.statements) if "INSERT OVERWRITE" in s]
-        self.assertEqual(len(full), 3)
+        self.assertEqual(len(full), len(sql.SILVER_FULL))
         self.assertGreater(min(full), max(i for i, s in enumerate(spark.statements) if "load_log" in s))  # last
 
     def test_nothing_new_still_rebuilds_the_full_load_tables(self):
