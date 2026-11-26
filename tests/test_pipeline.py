@@ -4,6 +4,7 @@ import sys
 import tempfile
 import types
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 SRC = os.path.join(os.path.dirname(__file__), "..", "src")
@@ -27,6 +28,19 @@ class ParserTest(unittest.TestCase):
         self.assertRegex(today, r"^\d{4}-\d{2}-\d{2}$")  # empty job parameter -> today (UTC)
         with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
             pipeline.parser().parse_args(["ingest", "--source", "tmdb", "--date", "../2026"])
+
+    def test_default_date_is_today_in_vietnam(self):
+        def at(utc):
+            class Clock(datetime):
+                @classmethod
+                def now(cls, tz=None):
+                    return utc.astimezone(tz)
+            with mock.patch.object(pipeline, "datetime", Clock):
+                return pipeline._date("")
+        # 02:00 on 27/11 in Vietnam (the daily schedule) is still 26/11 in UTC
+        self.assertEqual(at(datetime(2026, 11, 26, 19, 0, tzinfo=timezone.utc)), "2026-11-27")
+        self.assertEqual(at(datetime(2026, 11, 26, 16, 59, tzinfo=timezone.utc)), "2026-11-26")
+        self.assertEqual(pipeline.VIETNAM.utcoffset(None), timedelta(hours=7))
 
     def test_unknown_tasks_are_rejected(self):
         for argv in (["recommend"], ["transform"], ["ingest", "--source", "kafka"]):
