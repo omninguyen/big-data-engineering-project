@@ -42,15 +42,15 @@ def _setting(value: str):
 def ingest(args) -> int:
     from common import config
     if args.source == "musicbrainz":
-        from batch import musicbrainz
+        from ingest import musicbrainz
         return musicbrainz.run(args.date)
     if config.MOVIE_SOURCE == "file":  # TMDB export uploaded to MOVIE_FILE in the landing volume
-        from batch import tmdb_file
+        from ingest import tmdb_file
         return tmdb_file.run(args.date)
     if config.MOVIE_SOURCE == "sample":  # built-in demo set, no network needed
-        from batch import sample_movies
+        from ingest import sample_movies
         return sample_movies.run(args.date)
-    from batch import tmdb
+    from ingest import tmdb
     from common.errors import MissingCredentials
     try:
         return tmdb.run(args.date)

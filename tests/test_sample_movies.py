@@ -4,7 +4,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."  , "src"))
 
-from batch import sample_movies  # noqa: E402
+from ingest import sample_movies  # noqa: E402
 
 
 class SampleMoviesTest(unittest.TestCase):
