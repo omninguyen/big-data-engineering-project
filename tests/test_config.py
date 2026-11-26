@@ -6,7 +6,7 @@ import unittest
 
 SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
 CLEAN = {k: v for k, v in os.environ.items()
-         if k not in ("DATABRICKS_RUNTIME_VERSION", "UC_CATALOG", "UC_LANDING_ROOT", "MOVIE_SOURCE", "MOVIE_FILE",
+         if k not in ("DATABRICKS_RUNTIME_VERSION", "UC_CATALOG", "BRONZE_ROOT", "MOVIE_SOURCE", "MOVIE_FILE",
                       "TMDB_API_KEY")}
 
 
@@ -22,15 +22,17 @@ class ConfigTest(unittest.TestCase):
         return r.stdout.strip()
 
     def test_defaults(self):
-        self.assertEqual(self.out("print(config.ON_DATABRICKS, config.UC_LANDING_ROOT, config.MOVIE_FILE)"),
-                         "False /Volumes/big_data_engineering/bronze/landing "
-                         "/Volumes/big_data_engineering/bronze/landing/manual/tmdb_movies.json")
+        self.assertEqual(self.out("print(config.ON_DATABRICKS, repr(config.BRONZE_ROOT), repr(config.MOVIE_FILE))"),
+                         "False '' ''")  # BRONZE_ROOT comes from the job (--set BRONZE_ROOT=abfss://...)
 
     def test_databricks_runtime_is_detected(self):
         self.assertEqual(self.out("print(config.ON_DATABRICKS)", DATABRICKS_RUNTIME_VERSION="16.4"), "True")
 
-    def test_catalog_changes_the_volume(self):
-        self.assertEqual(self.out("print(config.UC_LANDING_ROOT)", UC_CATALOG="thesis"), "/Volumes/thesis/bronze/landing")
+    def test_bronze_root_and_the_movie_file_under_it(self):
+        self.assertEqual(self.out("print(config.BRONZE_ROOT, config.MOVIE_FILE)",
+                                  BRONZE_ROOT="abfss://bronze@acct.dfs.core.windows.net/"),
+                         "abfss://bronze@acct.dfs.core.windows.net "
+                         "abfss://bronze@acct.dfs.core.windows.net/manual/tmdb_movies.json")
 
     def test_secret_from_environment_without_databricks(self):
         self.assertEqual(self.out("print(config.TMDB_API_KEY)", TMDB_API_KEY=" k123 "), "k123")

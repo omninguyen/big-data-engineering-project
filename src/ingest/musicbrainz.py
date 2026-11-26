@@ -1,4 +1,4 @@
-"""Batch ingest: MusicBrainz release-groups (albums) per genre tag -> <landing volume>/musicbrainz/...
+"""Batch ingest: MusicBrainz release-groups (albums) per genre tag -> <BRONZE_ROOT>/musicbrainz/...
 Rate limit: 1 request/second (we sleep 1.1s). A contact in the User-Agent is required (MB_CONTACT).
 No album at all (network down, every request rejected) -> SourceError, so the task fails and is retried."""
 import logging
@@ -47,5 +47,5 @@ def run(ds: str, batch_id: str) -> int:
         raise SourceError("musicbrainz", f"no release groups returned for genres {config.MB_GENRES}")
     key = bronze_key("musicbrainz", "release_groups", ds, batch_id, "release_groups.jsonl")
     n = storage.put_jsonl(key, records)
-    log.info("MusicBrainz: wrote %s records to %s", n, storage.volume_path(key))
+    log.info("MusicBrainz: wrote %s records to %s", n, storage.bronze_path(key))
     return n

@@ -106,5 +106,5 @@ def run(ds: str, batch_id: str) -> int:
     key = bronze_key("tmdb", "movies", ds, batch_id, "movies.jsonl")
     n = storage.put_jsonl(key, records())
     log.warning("MOVIE_SOURCE=sample: wrote %s DEMO movies to %s (no ratings/popularity)", n,
-                storage.volume_path(key))
+                storage.bronze_path(key))
     return n

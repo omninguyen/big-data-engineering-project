@@ -1,4 +1,4 @@
-"""Batch ingest: TMDB movies -> <landing volume>/tmdb/movies/dt=<ds>/batch_id=<batch id>/movies.jsonl
+"""Batch ingest: TMDB movies -> <BRONZE_ROOT>/tmdb/movies/dt=<ds>/batch_id=<batch id>/movies.jsonl
 
 No API key -> MissingCredentials (the task is skipped). HTTP errors or an empty result -> SourceError, so the task
 fails and Databricks retries it. Errors never include the request URL, which carries the API key.
@@ -65,5 +65,5 @@ def run(ds: str, batch_id: str) -> int:
         raise SourceError("tmdb", "no movies returned by movie/popular and movie/top_rated")
     key = bronze_key("tmdb", "movies", ds, batch_id, "movies.jsonl")
     n = storage.put_jsonl(key, records)
-    log.info("TMDB: wrote %s records to %s", n, storage.volume_path(key))
+    log.info("TMDB: wrote %s records to %s", n, storage.bronze_path(key))
     return n

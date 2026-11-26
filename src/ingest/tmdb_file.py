@@ -2,7 +2,7 @@
 
 Use when the network blocks Python/curl (TCP+TLS) but a browser still reaches TMDB (e.g. via HTTP/3).
 The file is produced by docs/tmdb_browser_export.js (docs/HUONG_DAN.md) and uploaded to MOVIE_FILE,
-by default <landing volume>/manual/tmdb_movies.json. Same bronze layout as ingest/tmdb.py.
+by default <BRONZE_ROOT>/manual/tmdb_movies.json. Same bronze layout as ingest/tmdb.py.
 """
 import json
 import logging
@@ -14,12 +14,14 @@ log = logging.getLogger(__name__)
 
 def load(path: str, now: Optional[str] = None) -> list:
     """Read the browser file; returns bronze-ready records (deduplicated by TMDB id)."""
+    from common import storage
+    if not path:
+        raise FileNotFoundError("MOVIE_FILE is not set (and BRONZE_ROOT is empty)")
     try:
-        with open(path, encoding="utf-8") as f:
-            doc = json.load(f)
+        doc = json.loads(storage.read_text(path))
     except FileNotFoundError:
-        raise FileNotFoundError(f"{path} not found - export it with docs/tmdb_browser_export.js and upload it, e.g. "
-                                f"databricks fs cp tmdb_movies.json dbfs:{path}") from None
+        raise FileNotFoundError(f"{path} not found - export it with docs/tmdb_browser_export.js and upload it "
+                                f"to that path") from None
     if isinstance(doc, list):
         results, raw_genres = doc, {}
     else:
@@ -50,5 +52,5 @@ def run(ds: str, batch_id: str) -> int:
     records = load(config.MOVIE_FILE)
     key = bronze_key("tmdb", "movies", ds, batch_id, "movies.jsonl")
     n = storage.put_jsonl(key, records)
-    log.info("MOVIE_SOURCE=file: wrote %s movies from %s to %s", n, config.MOVIE_FILE, storage.volume_path(key))
+    log.info("MOVIE_SOURCE=file: wrote %s movies from %s to %s", n, config.MOVIE_FILE, storage.bronze_path(key))
     return n
