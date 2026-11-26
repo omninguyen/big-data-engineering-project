@@ -1,14 +1,14 @@
-"""Ingest for Databricks: source API -> the ADLS container bronze (JSONL), one Python task per source.
+"""Ingest for Databricks: source API -> landing/ of the ADLS container bronze (JSONL), one Python task per source.
 
   python pipeline.py [--set KEY=VALUE ...] ingest --source tmdb|musicbrainz [--date YYYY-MM-DD]
 
 ingest     TMDB movies -> <bronze>/tmdb/movies/dt=<date>/batch_id=<batch id>/, MusicBrainz albums ->
            <bronze>/musicbrainz/release_groups/dt=<date>/batch_id=<batch id>/
-           (bronze: BRONZE_ROOT, e.g. abfss://bronze@<account>.dfs.core.windows.net). Every run is a new batch
+           (bronze: BRONZE_ROOT, e.g. abfss://bronze@<account>.dfs.core.windows.net/landing). Every run is a new batch
            (src/ingest/batch.py), so a rerun of the same --date never overwrites an earlier one.
 --set      settings of src/common/config.py, applied before it is imported. Serverless job tasks have no cluster
            environment variables, so the job passes them as parameters, e.g.
-           --set BRONZE_ROOT=abfss://bronze@<account>.dfs.core.windows.net
+           --set BRONZE_ROOT=abfss://bronze@<account>.dfs.core.windows.net/landing
 
 --date defaults to today (UTC). A non-zero exit fails the task, so Databricks retries it. TMDB without an API key
 (secret tmdb-api-key) is the one expected gap: it is logged and the task succeeds (Databricks has no 'skipped' state).
@@ -76,7 +76,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--set", dest="settings", type=_setting, action="append", default=[], metavar="KEY=VALUE",
                    help="environment setting for src/common/config.py, repeatable")
     sub = p.add_subparsers(dest="task", required=True)
-    s = sub.add_parser("ingest", help="source API -> ADLS container bronze (JSONL)")
+    s = sub.add_parser("ingest", help="source API -> landing/ of the ADLS container bronze (JSONL)")
     s.add_argument("--source", choices=["tmdb", "musicbrainz"], required=True)
     s.add_argument("--date", type=_date, default="")
     return p

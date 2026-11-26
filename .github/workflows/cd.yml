@@ -5,7 +5,7 @@
 # Secrets (repository or environment "prod"):
 #   DATABRICKS_HOST                                   workspace URL, https://<workspace>.azuredatabricks.net
 #   DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET   OAuth secret of the deploying service principal
-#   BRONZE_ROOT                                       ADLS container bronze, abfss://bronze@<account>.dfs.core.windows.net
+#   BRONZE_ROOT                                       raw files, abfss://bronze@<account>.dfs.core.windows.net/landing
 # Variable (optional): INGEST_SCHEDULE = UNPAUSED switches the daily schedule on. Default PAUSED.
 name: cd
 

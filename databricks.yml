@@ -10,7 +10,7 @@ bundle:
 
 variables:
   bronze_root:
-    description: The ADLS container bronze, abfss://bronze@<account>.dfs.core.windows.net (GitHub secret BRONZE_ROOT).
+    description: Raw files, abfss://bronze@<account>.dfs.core.windows.net/landing (GitHub secret BRONZE_ROOT).
   schedule_status:
     description: PAUSED or UNPAUSED (GitHub variable INGEST_SCHEDULE). Every deploy applies it to the schedule.
     default: PAUSED
