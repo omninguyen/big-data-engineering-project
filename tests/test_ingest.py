@@ -56,6 +56,19 @@ class TmdbTest(unittest.TestCase):
         key, recs = put.call_args.args
         self.assertEqual(key, "bronze/tmdb/movies/dt=2026-11-24/batch_id=B1/movies.jsonl")
 
+    def test_pauses_after_every_request(self):
+        """At most 4 requests/s: under TMDB's ceiling (around 40/s) and within its old limit of 40 per 10 s."""
+        def handler(url, params):
+            return response(payload={"genres": []} if url.endswith("list") else {"results": [{"id": 1}]})
+        sess = FakeSession(handler)
+        with mock.patch.object(config, "TMDB_API_KEY", KEY), mock.patch.object(config, "TMDB_PAGES", 3), \
+                mock.patch.object(config, "BRONZE_ROOT", ADLS), mock.patch.object(tmdb, "session", return_value=sess), \
+                mock.patch.object(tmdb.time, "sleep") as sleep, mock.patch("common.storage.put_jsonl", return_value=6):
+            tmdb.run("2026-11-24", "B1")
+        self.assertEqual(len(sess.calls), 1 + 2 * 3)  # genre list + 3 pages of each endpoint
+        self.assertEqual([c.args for c in sleep.call_args_list], [(0.25,)] * len(sess.calls))
+        self.assertLessEqual(1 / tmdb.PAUSE_S, 4)
+
     def test_rejected_key_fails_without_leaking_it(self):
         with self.assertRaises(SourceError) as ctx:
             self.run_with(lambda url, p: response(status=401))

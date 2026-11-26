@@ -2,6 +2,10 @@
 
 No API key -> MissingCredentials (the task is skipped). HTTP errors or an empty result -> SourceError, so the task
 fails and Databricks retries it. Errors never include the request URL, which carries the API key.
+
+Rate limit: requests are sent one at a time on one connection, with a pause of PAUSE_S after each, so at most
+4 requests/s: about 10x under TMDB's ceiling (around 40-50 requests/s per IP) and within its old limit of 40 per
+10 s. A 429 is retried after its Retry-After (common/http.py). A run makes 1 + 2 x TMDB_PAGES requests (41).
 """
 import logging
 import time
@@ -16,6 +20,7 @@ from ingest.batch import bronze_key
 
 log = logging.getLogger(__name__)
 ENDPOINTS = ["movie/popular", "movie/top_rated"]
+PAUSE_S = 0.25  # after every request: at most 4 requests/s
 
 
 def _auth(sess):
@@ -35,6 +40,8 @@ def _get(sess, path: str, params: dict):
         return sess.get(f"{config.TMDB_BASE_URL}/{path}", params=params, timeout=30)
     except requests.RequestException as e:  # the message would contain the URL with api_key
         raise SourceError("tmdb", f"GET {path} failed: {type(e).__name__}") from None
+    finally:
+        time.sleep(PAUSE_S)  # also after a failed request
 
 
 def run(ds: str, batch_id: str) -> int:
@@ -60,7 +67,6 @@ def run(ds: str, batch_id: str) -> int:
                 m["_endpoint"] = ep
                 m["_ingested_at"] = now
                 records.append(m)
-            time.sleep(0.05)
     if not records:
         raise SourceError("tmdb", "no movies returned by movie/popular and movie/top_rated")
     key = bronze_key("tmdb", "movies", ds, batch_id, "movies.jsonl")
