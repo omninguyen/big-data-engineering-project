@@ -38,7 +38,7 @@ class TmdbTest(unittest.TestCase):
         with mock.patch.object(config, "TMDB_API_KEY", key), mock.patch.object(config, "TMDB_PAGES", 1), \
                 mock.patch.object(tmdb, "session", return_value=sess), mock.patch.object(tmdb.time, "sleep"), \
                 mock.patch("common.storage.put_jsonl", side_effect=lambda k, recs: len(list(recs))) as put:
-            return tmdb.run("2026-11-24"), put, sess
+            return tmdb.run("2026-11-24", "B1"), put, sess
 
     def test_no_key_is_missing_credentials(self):
         with self.assertRaises(MissingCredentials):
@@ -52,7 +52,7 @@ class TmdbTest(unittest.TestCase):
         n, put, _ = self.run_with(handler)
         self.assertEqual(n, 2)  # popular + top_rated, 1 page each
         key, recs = put.call_args.args
-        self.assertEqual(key, "bronze/tmdb/movies/dt=2026-11-24/movies.jsonl")
+        self.assertEqual(key, "bronze/tmdb/movies/dt=2026-11-24/batch_id=B1/movies.jsonl")
 
     def test_rejected_key_fails_without_leaking_it(self):
         with self.assertRaises(SourceError) as ctx:
@@ -82,8 +82,11 @@ class MusicBrainzTest(unittest.TestCase):
         with mock.patch.object(config, "MB_GENRES", ["jazz", "rock"]), mock.patch.object(config, "MB_PAGES_PER_GENRE", 1), \
                 mock.patch.object(musicbrainz, "session", return_value=FakeSession(handler)), \
                 mock.patch.object(musicbrainz.time, "sleep"), \
-                mock.patch("common.storage.put_jsonl", side_effect=lambda k, recs: len(list(recs))):
-            return musicbrainz.run("2026-11-24")
+                mock.patch("common.storage.put_jsonl", side_effect=lambda k, recs: len(list(recs))) as put:
+            n = musicbrainz.run("2026-11-24", "B1")
+        self.assertEqual(put.call_args.args[0], "bronze/musicbrainz/release_groups/dt=2026-11-24/batch_id=B1/"
+                                                "release_groups.jsonl")
+        return n
 
     def test_one_failing_genre_does_not_stop_the_others(self):
         def handler(url, params):

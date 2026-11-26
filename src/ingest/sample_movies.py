@@ -100,9 +100,10 @@ def records() -> list:
             for i, (title, year, lang, genres) in enumerate(MOVIES, start=1)]
 
 
-def run(ds: str) -> int:
+def run(ds: str, batch_id: str) -> int:
     from common import storage  # imported here so records() stays importable on its own
-    key = f"bronze/tmdb/movies/dt={ds}/movies.jsonl"
+    from ingest.batch import bronze_key
+    key = bronze_key("tmdb", "movies", ds, batch_id, "movies.jsonl")
     n = storage.put_jsonl(key, records())
     log.warning("MOVIE_SOURCE=sample: wrote %s DEMO movies to %s (no ratings/popularity)", n,
                 storage.volume_path(key))

@@ -10,12 +10,13 @@ import requests
 from common import config, storage
 from common.errors import SourceError
 from common.http import session
+from ingest.batch import bronze_key
 
 log = logging.getLogger(__name__)
 URL = "https://musicbrainz.org/ws/2/release-group"
 
 
-def run(ds: str) -> int:
+def run(ds: str, batch_id: str) -> int:
     sess = session(f"MediaPlatformThesis/1.0 ( {config.MB_CONTACT} )")
     now = datetime.now(timezone.utc).isoformat()
     records = []
@@ -44,7 +45,7 @@ def run(ds: str) -> int:
                 records.append(g)
     if not records:
         raise SourceError("musicbrainz", f"no release groups returned for genres {config.MB_GENRES}")
-    key = f"bronze/musicbrainz/release_groups/dt={ds}/release_groups.jsonl"
+    key = bronze_key("musicbrainz", "release_groups", ds, batch_id, "release_groups.jsonl")
     n = storage.put_jsonl(key, records)
     log.info("MusicBrainz: wrote %s records to %s", n, storage.volume_path(key))
     return n

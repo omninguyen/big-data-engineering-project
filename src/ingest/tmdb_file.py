@@ -44,10 +44,11 @@ def load(path: str, now: Optional[str] = None) -> list:
     return out
 
 
-def run(ds: str) -> int:
+def run(ds: str, batch_id: str) -> int:
     from common import config, storage  # imported here so load() stays a pure function
+    from ingest.batch import bronze_key
     records = load(config.MOVIE_FILE)
-    key = f"bronze/tmdb/movies/dt={ds}/movies.jsonl"
+    key = bronze_key("tmdb", "movies", ds, batch_id, "movies.jsonl")
     n = storage.put_jsonl(key, records)
     log.info("MOVIE_SOURCE=file: wrote %s movies from %s to %s", n, config.MOVIE_FILE, storage.volume_path(key))
     return n

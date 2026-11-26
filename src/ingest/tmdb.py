@@ -1,4 +1,4 @@
-"""Batch ingest: TMDB movies -> <landing volume>/tmdb/movies/dt=<ds>/movies.jsonl
+"""Batch ingest: TMDB movies -> <landing volume>/tmdb/movies/dt=<ds>/batch_id=<batch id>/movies.jsonl
 
 No API key -> MissingCredentials (the task is skipped). HTTP errors or an empty result -> SourceError, so the task
 fails and Databricks retries it. Errors never include the request URL, which carries the API key.
@@ -12,6 +12,7 @@ import requests
 from common import config, storage
 from common.errors import MissingCredentials, SourceError
 from common.http import session
+from ingest.batch import bronze_key
 
 log = logging.getLogger(__name__)
 ENDPOINTS = ["movie/popular", "movie/top_rated"]
@@ -36,7 +37,7 @@ def _get(sess, path: str, params: dict):
         raise SourceError("tmdb", f"GET {path} failed: {type(e).__name__}") from None
 
 
-def run(ds: str) -> int:
+def run(ds: str, batch_id: str) -> int:
     sess = session("MediaPlatformThesis/1.0", proxy=config.TMDB_PROXY)
     auth = _auth(sess)
     r = _get(sess, "genre/movie/list", auth)
@@ -62,7 +63,7 @@ def run(ds: str) -> int:
             time.sleep(0.05)
     if not records:
         raise SourceError("tmdb", "no movies returned by movie/popular and movie/top_rated")
-    key = f"bronze/tmdb/movies/dt={ds}/movies.jsonl"
+    key = bronze_key("tmdb", "movies", ds, batch_id, "movies.jsonl")
     n = storage.put_jsonl(key, records)
     log.info("TMDB: wrote %s records to %s", n, storage.volume_path(key))
     return n
