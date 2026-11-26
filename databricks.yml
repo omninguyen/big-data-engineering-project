@@ -46,10 +46,11 @@ resources:
             dependencies:
               - requests>=2.31,<3
       # One task per table, so the job graph shows the path of the data: source -> bronze -> silver -> gold.
+      # The ops tasks come last and monitor every batch.
       # The TMDB and MusicBrainz paths are independent: when one source fails, the other still reaches silver,
       # and the next run catches up (COPY INTO and silver.load_log only take what is new).
       tasks:
-        - task_key: setup_tables   # creates the missing bronze, silver and gold tables (src/sql/)
+        - task_key: setup_tables   # creates the missing bronze, silver, gold and ops tables (src/sql/)
           environment_key: default
           max_retries: 1
           min_retry_interval_millis: 60000
@@ -266,3 +267,25 @@ resources:
           spark_python_task:
             python_file: ./src/pipeline.py
             parameters: ["gold", "--table", "fact_media_metric_daily"]
+        - task_key: ops_pipeline_record_metrics   # full load: rows, files and lag of every ingest batch
+          depends_on:
+            - task_key: silver_movie                        # TMDB
+            - task_key: silver_release_group_metric_daily   # runs after silver_release_group (MusicBrainz)
+          run_if: ALL_DONE   # also when a path failed: its batches show up as not loaded into silver
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 1800
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["ops", "--table", "pipeline_record_metrics"]
+        - task_key: ops_data_quality_results   # full load: quality checks of every ingest batch
+          depends_on:
+            - task_key: ops_pipeline_record_metrics
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 900
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["ops", "--table", "data_quality_results"]

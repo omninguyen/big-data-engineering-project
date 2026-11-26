@@ -10,7 +10,8 @@ sys.path.insert(0, os.path.join(ROOT, "src"))
 import pipeline  # noqa: E402
 import sql  # noqa: E402
 
-# The job graph: task -> the tasks it waits for. Each path follows the data, source -> bronze -> silver -> gold.
+# The job graph: task -> the tasks it waits for. Each path follows the data, source -> bronze -> silver -> gold;
+# the ops tasks come last.
 DAG = {
     "setup_tables": set(),
     "ingest_tmdb": set(),
@@ -34,7 +35,11 @@ DAG = {
     "gold_bridge_media_genre": {"silver_movie_genre", "silver_release_group_genre"},
     "gold_fact_media_metric_daily": {"silver_movie_metric_daily", "silver_release_group_metric_daily",
                                      "gold_dim_media"},  # reads gold.dim_media
+    "ops_pipeline_record_metrics": {"silver_movie", "silver_release_group_metric_daily"},  # reads silver.load_log
+    "ops_data_quality_results": {"ops_pipeline_record_metrics"},
 }
+# Tasks that also run when a task they wait for failed (the others run only when all of them succeeded).
+RUN_IF = {"ops_pipeline_record_metrics": "ALL_DONE"}  # monitors the batches of a failed path too
 
 try:
     import yaml
@@ -71,21 +76,22 @@ class BundleTest(unittest.TestCase):
                 pipeline.parser().parse_args(task["spark_python_task"]["parameters"])  # what pipeline.py accepts
                 self.assertIn(task["environment_key"], environments)  # required on serverless
                 self.assertGreaterEqual(task["max_retries"], 1)
-                self.assertNotIn("run_if", task)  # a task runs only when the tasks it waits for succeeded
+                self.assertEqual(task.get("run_if"), RUN_IF.get(key))
 
     def test_one_task_per_table(self):
         tasks, _ = self.tasks_and_environments()
         loads = {}
         for key, task in tasks.items():
             args = pipeline.parser().parse_args(task["spark_python_task"]["parameters"])
-            if args.task in ("bronze", "silver", "gold"):
+            if args.task in ("bronze", "silver", "gold", "ops"):
                 self.assertEqual(key, f"{args.task}_{args.table}")
                 self.assertEqual(dict(args.settings), {"BRONZE_ROOT": "${var.bronze_root}"} if args.task == "bronze"
-                                 else {})  # silver and gold read and write Unity Catalog tables only
+                                 else {})  # silver, gold and ops read and write Unity Catalog tables only
                 loads.setdefault(args.task, []).append(args.table)
         self.assertEqual(sorted(loads["bronze"]), sorted(sql.BRONZE_TABLES))
         self.assertEqual(sorted(loads["silver"]), sorted(sql.SILVER_LOADED))
         self.assertEqual(sorted(loads["gold"]), sorted(sql.GOLD_TABLES))
+        self.assertEqual(sorted(loads["ops"]), sorted(sql.OPS_TABLES))
 
     def test_setup_creates_the_tables_first(self):
         tasks, _ = self.tasks_and_environments()

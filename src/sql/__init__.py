@@ -1,4 +1,4 @@
-"""SQL of the Unity Catalog tables, run with spark.sql (pipeline.py setup, bronze, silver, gold: a job task per table).
+"""SQL of the Unity Catalog tables, run with spark.sql (pipeline.py setup, bronze, silver, gold, ops: a task per table).
 
 src/sql/bronze/<table>.sql       creates <catalog>.bronze.<table>, an external Delta table in <tables root>/<table>
 src/sql/bronze/load/<table>.sql  loads the new files of landing/ into it with COPY INTO
@@ -8,8 +8,10 @@ src/sql/silver/load/<table>.sql  incremental tables: loads one bronze batch; run
                                  full-load tables: rebuilds the whole table, on every run, after the incremental ones
 src/sql/gold/<table>.sql         creates <catalog>.gold.<table>, an external Delta table in <gold root>/<table>
 src/sql/gold/load/<table>.sql    rebuilds it from silver on every run (full load)
+src/sql/ops/<table>.sql          creates <catalog>.ops.<table> (pipeline metrics, data quality) in <ops root>/<table>
+src/sql/ops/load/<table>.sql     rebuilds it from bronze and silver.load_log on every run (full load)
 ${...} placeholders are filled in from common/config.py (UC_CATALOG, BRONZE_TABLES_ROOT, BRONZE_ROOT, SILVER_ROOT,
-GOLD_ROOT),
+GOLD_ROOT, OPS_ROOT),
 so the files hold no workspace or storage details. A file may hold several statements, each ending with ';' at the
 end of a line.
 """
@@ -31,6 +33,7 @@ SILVER_FULL = ["genre", "movie_genre", "release_group_genre", "release_group_art
 SILVER_LOADED = [*SILVER_INCREMENTAL, *SILVER_FULL]  # every silver table with a load (load_log is written by them)
 GOLD_TABLES = ["dim_date", "dim_media", "dim_genre", "bridge_media_genre",  # full loads; dims before their foreign keys
                "fact_media_metric_daily"]
+OPS_TABLES = ["pipeline_record_metrics", "data_quality_results"]  # full loads; data_quality_results reads the first
 BATCH_ID = re.compile(r"[0-9A-Za-z-]+")
 
 
@@ -107,10 +110,18 @@ def create_gold_tables(spark) -> list:
     return _create(spark, "gold", GOLD_TABLES, root, "gold_root")
 
 
+def create_ops_tables(spark) -> list:
+    from common import config
+    root = _abfss("OPS_ROOT", config.OPS_ROOT,
+                  "abfss://gold@<account>.dfs.core.windows.net/ops (ops/ in the container gold, from GOLD_ROOT)")
+    return _create(spark, "ops", OPS_TABLES, root, "ops_root")
+
+
 def create_tables(spark) -> list:
-    """Create every bronze, silver and gold table if missing, in one job task (setup_tables) before the loads: tasks
-    running in parallel would otherwise create the shared silver.load_log at the same time."""
-    return create_bronze_tables(spark) + create_silver_tables(spark) + create_gold_tables(spark)
+    """Create every bronze, silver, gold and ops table if missing, in one job task (setup_tables) before the loads:
+    tasks running in parallel would otherwise create the shared silver.load_log at the same time."""
+    return create_bronze_tables(spark) + create_silver_tables(spark) + create_gold_tables(spark) + \
+        create_ops_tables(spark)
 
 
 def _run(spark, text: str) -> dict:
@@ -156,17 +167,33 @@ def load_silver_tables(spark) -> dict:
     return {f"{config.UC_CATALOG}.silver.{name}": load_silver_table(spark, name) for name in SILVER_LOADED}
 
 
+def _full_load(spark, layer: str, name: str, tables: list) -> dict:
+    """Rebuild one table of a layer whose tables are all full loads. Returns {"rows": n}."""
+    from common import config
+    if name not in tables:
+        raise ValueError(f"unknown {layer} table {name!r}, expected one of {tables}")
+    counts = _run(spark, render(f"{layer}/load", name, catalog=config.UC_CATALOG))
+    log.info("%s.%s: full load, %s rows", layer, name, counts["num_inserted_rows"])
+    return {"rows": counts["num_inserted_rows"]}
+
+
 def load_gold_table(spark, name: str) -> dict:
     """Rebuild one gold table from silver (full load). Returns {"rows": n}."""
-    from common import config
-    if name not in GOLD_TABLES:
-        raise ValueError(f"unknown gold table {name!r}, expected one of {GOLD_TABLES}")
-    counts = _run(spark, render("gold/load", name, catalog=config.UC_CATALOG))
-    log.info("gold.%s: full load, %s rows", name, counts["num_inserted_rows"])
-    return {"rows": counts["num_inserted_rows"]}
+    return _full_load(spark, "gold", name, GOLD_TABLES)
 
 
 def load_gold_tables(spark) -> dict:
     """Rebuild every gold table. Returns {table: {"rows": n}}."""
     from common import config
     return {f"{config.UC_CATALOG}.gold.{name}": load_gold_table(spark, name) for name in GOLD_TABLES}
+
+
+def load_ops_table(spark, name: str) -> dict:
+    """Rebuild one ops table from bronze and silver.load_log (full load). Returns {"rows": n}."""
+    return _full_load(spark, "ops", name, OPS_TABLES)
+
+
+def load_ops_tables(spark) -> dict:
+    """Rebuild every ops table. Returns {table: {"rows": n}}."""
+    from common import config
+    return {f"{config.UC_CATALOG}.ops.{name}": load_ops_table(spark, name) for name in OPS_TABLES}

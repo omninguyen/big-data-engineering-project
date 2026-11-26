@@ -95,10 +95,13 @@ class TablesTest(unittest.TestCase):
         self.assertEqual(self.run_with(["gold", "--table", "dim_media"], "load_gold_table"),
                          ({"t": 1}, ("dim_media",)))
         self.assertEqual(self.run_with(["gold"], "load_gold_tables"), ({"t": 1}, ()))
+        self.assertEqual(self.run_with(["ops", "--table", "data_quality_results"], "load_ops_table"),
+                         ({"t": 1}, ("data_quality_results",)))
+        self.assertEqual(self.run_with(["ops"], "load_ops_tables"), ({"t": 1}, ()))
 
     def test_unknown_table_is_rejected(self):
         for argv in (["bronze", "--table", "movie"], ["silver", "--table", "load_log"], ["silver", "--table", "x"],
-                     ["gold", "--table", "movie"]):
+                     ["gold", "--table", "movie"], ["ops", "--table", "dim_date"]):
             with self.subTest(argv=argv), self.assertRaises(SystemExit), mock.patch("sys.stderr"):
                 pipeline.parser().parse_args(argv)
 
