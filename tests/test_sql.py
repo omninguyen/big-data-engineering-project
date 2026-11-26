@@ -1,4 +1,4 @@
-"""src/sql: the bronze, silver and gold statements, and the runner with a fake Spark session."""
+"""src/sql: the bronze, silver, gold and ops statements, and the runner with a fake Spark session."""
 import os
 import re
 import sys
@@ -15,13 +15,14 @@ LANDING = "abfss://bronze@acct.dfs.core.windows.net/landing"
 LINEAGE = {"dt", "batch_id", "_source_file", "_ingested_at", "_file_size", "_file_modified_at"}
 SILVER = "abfss://silver@acct.dfs.core.windows.net"
 GOLD = "abfss://gold@acct.dfs.core.windows.net"
-ROOTS = {"bronze": ROOT, "silver": SILVER, "gold": GOLD}
+OPS = f"{GOLD}/ops"
+ROOTS = {"bronze": ROOT, "silver": SILVER, "gold": GOLD, "ops": OPS}
 SOURCES = {"tmdb_movies": "tmdb/movies", "musicbrainz_release_groups": "musicbrainz/release_groups",
            "listenbrainz_release_group_popularity": "listenbrainz/release_group_popularity"}
 
 
 def create(layer: str, name: str) -> str:
-    placeholder = {"bronze": "tables_root", "silver": "silver_root", "gold": "gold_root"}[layer]
+    placeholder = {"bronze": "tables_root", "silver": "silver_root", "gold": "gold_root", "ops": "ops_root"}[layer]
     return sql.render(layer, name, catalog="cat", **{placeholder: ROOTS[layer]})
 
 
@@ -476,18 +477,112 @@ class GoldTest(unittest.TestCase):
             self.run_gold(spark)
 
 
+class OpsStatementTest(unittest.TestCase):
+    # bronze table -> (main silver table, the filter of its silver load)
+    FILTERS = {
+        "tmdb_movies": ("movie", "try_cast(id AS BIGINT) IS NOT NULL"),
+        "musicbrainz_release_groups": ("release_group", "id <> ''"),
+        "listenbrainz_release_group_popularity": (
+            "release_group_metric_daily",
+            "release_group_mbid <> '' AND total_listen_count IS NOT NULL AND dt IS NOT NULL"),
+    }
+
+    def test_external_delta_tables_in_ops_with_a_primary_key(self):
+        for name in sql.OPS_TABLES:
+            with self.subTest(table=name):
+                text = create("ops", name)
+                self.assertNotIn("$", text)
+                self.assertIn(f"CREATE TABLE IF NOT EXISTS cat.ops.{name} (", text)
+                self.assertIn(f"LOCATION '{OPS}/{name}'", text)
+                self.assertIn("USING DELTA", text)
+                key = re.search(r"PRIMARY KEY \(([^)]*)\)", text).group(1).split(", ")
+                for column in key:  # Unity Catalog needs NOT NULL key columns
+                    self.assertRegex(text, rf"\n  {column} +\w+ +NOT NULL")
+        for folder in ("ops", "ops/load"):
+            files = [f[:-len(".sql")] for f in os.listdir(os.path.join(sql.HERE, folder)) if f.endswith(".sql")]
+            self.assertEqual(sorted(files), sorted(sql.OPS_TABLES), folder)
+
+    def test_agreed_columns(self):
+        self.assertEqual(columns("pipeline_record_metrics", "ops"), [
+            "dataset", "target", "batch_id", "dt", "rows_read", "rows_valid", "rows_rejected", "rows_duplicate",
+            "files", "bytes", "last_file_modified_at", "last_ingested_at", "silver_loaded_at", "silver_lag_s"])
+        self.assertIn("PRIMARY KEY (dataset, batch_id)", create("ops", "pipeline_record_metrics"))
+        quality = create("ops", "data_quality_results")
+        self.assertEqual(columns("data_quality_results", "ops"), [
+            "dataset", "batch_id", "check_name", "severity", "value", "op", "threshold", "passed", "description"])
+        self.assertIn("PRIMARY KEY (dataset, batch_id, check_name)", quality)
+        self.assertIn("FOREIGN KEY (dataset, batch_id)\n    REFERENCES cat.ops.pipeline_record_metrics", quality)
+        self.assertLess(sql.OPS_TABLES.index("pipeline_record_metrics"), sql.OPS_TABLES.index("data_quality_results"))
+
+    def test_full_loads(self):
+        for name in sql.OPS_TABLES:
+            with self.subTest(table=name):
+                steps = sql.statements(sql.render("ops/load", name, catalog="cat"))
+                self.assertEqual(len(steps), 1)
+                self.assertRegex(steps[0], rf"INSERT OVERWRITE cat\.ops\.{name}\s*\(")  # one write replaces it
+                self.assertEqual(column_list(steps[0]), columns(name, "ops"))
+
+    def test_record_metrics_use_the_filters_of_the_silver_loads(self):
+        text = sql.render("ops/load", "pipeline_record_metrics", catalog="cat")
+        self.assertEqual(set(self.FILTERS), set(sql.BRONZE_TABLES))  # every bronze table is measured
+        for dataset, (target, predicate) in self.FILTERS.items():
+            with self.subTest(dataset=dataset):
+                self.assertIn(predicate, sql.render("silver/load", target, catalog="cat", batch_id="B1"))
+                self.assertIn(f"CASE WHEN {predicate}", text)
+                self.assertIn(f"'{dataset}', '{target}'" if dataset != "tmdb_movies" else
+                              f"'{dataset}' AS dataset, '{target}' AS target", text)
+                self.assertIn(f"FROM cat.bronze.{dataset}", text)
+        self.assertIn("count(valid_key)           AS rows_valid", text)
+        self.assertIn("b.rows_valid - b.keys_valid", text)  # duplicates: valid rows minus distinct keys
+        self.assertIn("SELECT DISTINCT dataset, batch_id, _source_file, _file_size", text)  # each file counted once
+        self.assertIn("LEFT JOIN cat.silver.load_log AS l ON l.table_name = b.target AND l.batch_id = b.batch_id",
+                      text)  # a batch not in silver yet is kept
+        self.assertIn("timestampdiff(SECOND, b.last_ingested_at, l.loaded_at)", text)
+
+    def test_quality_checks(self):
+        text = sql.render("ops/load", "data_quality_results", catalog="cat")
+        self.assertEqual(text.count("FROM cat.ops.pipeline_record_metrics"), 3)
+        for check in ("'rejected_rate'", "'duplicate_rate'", "'loaded_to_silver'"):
+            self.assertIn(check, text)
+        self.assertIn("try_divide(rows_rejected, rows_read)", text)
+        self.assertIn("CASE op WHEN '<=' THEN value <= threshold ELSE value >= threshold END  AS passed", text)
+
+
+class OpsTest(unittest.TestCase):
+    def run_ops(self, spark, root=OPS):
+        with mock.patch.object(config, "OPS_ROOT", root), mock.patch.object(config, "UC_CATALOG", "cat"):
+            sql.create_ops_tables(spark)
+            return sql.load_ops_tables(spark)
+
+    def test_rebuilds_every_table_in_order(self):
+        spark = FakeSpark()
+        with self.assertLogs("sql", "INFO"):
+            self.assertEqual(self.run_ops(spark), {f"cat.ops.{name}": {"rows": 2} for name in sql.OPS_TABLES})
+        loads = [s for s in spark.statements if "INSERT OVERWRITE cat.ops." in s]
+        self.assertEqual([re.search(r"INSERT OVERWRITE cat\.ops\.(\w+)", s).group(1) for s in loads], sql.OPS_TABLES)
+
+    def test_odd_root_or_a_managed_table_fails(self):
+        for root in ("", "/tmp/ops", f"{OPS}' OR '1"):
+            with self.subTest(root=root), self.assertRaises(ValueError):
+                self.run_ops(FakeSpark(), root)
+        spark = FakeSpark({"cat.ops.pipeline_record_metrics": "abfss://uc@acct.dfs.core.windows.net/__unitystorage/1"})
+        with self.assertRaisesRegex(RuntimeError, "drop it"):
+            self.run_ops(spark)
+
+
 class OneTableTest(unittest.TestCase):
     """One job task per table: setup creates every table, then each task loads one."""
     def patched(self):
         return mock.patch.multiple(config, BRONZE_TABLES_ROOT=ROOT, BRONZE_ROOT=LANDING, SILVER_ROOT=SILVER,
-                                   GOLD_ROOT=GOLD, UC_CATALOG="cat")
+                                   GOLD_ROOT=GOLD, OPS_ROOT=OPS, UC_CATALOG="cat")
 
-    def test_setup_creates_bronze_then_silver_then_gold(self):
+    def test_setup_creates_bronze_silver_gold_then_ops(self):
         spark = FakeSpark()
         with self.patched(), self.assertLogs("sql", "INFO"):
             tables = sql.create_tables(spark)
         self.assertEqual(tables, [f"cat.bronze.{t}" for t in sql.BRONZE_TABLES] +
-                         [f"cat.silver.{t}" for t in sql.SILVER_TABLES] + [f"cat.gold.{t}" for t in sql.GOLD_TABLES])
+                         [f"cat.silver.{t}" for t in sql.SILVER_TABLES] + [f"cat.gold.{t}" for t in sql.GOLD_TABLES] +
+                         [f"cat.ops.{t}" for t in sql.OPS_TABLES])
 
     def test_one_bronze_table(self):
         spark = FakeSpark()
@@ -513,10 +608,17 @@ class OneTableTest(unittest.TestCase):
         self.assertEqual(len(spark.statements), 1)
         self.assertIn("INSERT OVERWRITE cat.gold.dim_media", spark.statements[0])
 
+    def test_one_ops_table(self):
+        spark = FakeSpark()
+        with self.patched(), self.assertLogs("sql", "INFO"):
+            self.assertEqual(sql.load_ops_table(spark, "data_quality_results"), {"rows": 2})
+        self.assertEqual(len(spark.statements), 1)
+        self.assertIn("INSERT OVERWRITE cat.ops.data_quality_results", spark.statements[0])
+
     def test_unknown_table_fails(self):
         with self.patched():
             for load, name in ((sql.load_bronze_table, "movie"), (sql.load_silver_table, "load_log"),
-                               (sql.load_gold_table, "movie")):
+                               (sql.load_gold_table, "movie"), (sql.load_ops_table, "dim_date")):
                 with self.subTest(name=name), self.assertRaises(ValueError):
                     load(FakeSpark(), name)
 

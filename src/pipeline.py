@@ -1,25 +1,27 @@
 """Ingest for Databricks: source API -> landing/ of the ADLS container bronze (JSONL), one Python task per source,
-then the bronze, silver and gold tables in Unity Catalog.
+then the bronze, silver and gold tables in Unity Catalog, and the ops tables that monitor them.
 
   python pipeline.py [--set KEY=VALUE ...] ingest --source tmdb|musicbrainz|listenbrainz [--date YYYY-MM-DD]
   python pipeline.py [--set KEY=VALUE ...] setup
   python pipeline.py [--set KEY=VALUE ...] bronze [--table <bronze table>]
   python pipeline.py [--set KEY=VALUE ...] silver [--table <silver table>]
   python pipeline.py [--set KEY=VALUE ...] gold [--table <gold table>]
+  python pipeline.py [--set KEY=VALUE ...] ops [--table <ops table>]
 
 ingest     TMDB movies -> <bronze>/tmdb/movies/dt=<date>/batch_id=<batch id>/, MusicBrainz albums ->
            <bronze>/musicbrainz/release_groups/dt=<date>/batch_id=<batch id>/, ListenBrainz listen counts of the
            albums in silver.release_group -> <bronze>/listenbrainz/release_group_popularity/dt=<date>/batch_id=<id>/
            (bronze: BRONZE_ROOT, e.g. abfss://bronze@<account>.dfs.core.windows.net/landing). Every run is a new batch
            (src/ingest/batch.py), so a rerun of the same --date never overwrites an earlier one.
-setup      creates the bronze, silver and gold tables if missing (src/sql/bronze/, silver/, gold/): external Delta
-           tables in tables/ next to landing/ (BRONZE_ROOT), in the container silver (SILVER_ROOT) and in the
-           container gold (GOLD_ROOT).
+setup      creates the bronze, silver, gold and ops tables if missing (src/sql/bronze/, silver/, gold/, ops/):
+           external Delta tables in tables/ next to landing/ (BRONZE_ROOT), in the container silver (SILVER_ROOT),
+           in the container gold (GOLD_ROOT) and in its folder ops/.
 bronze     loads the new files of landing/ into a bronze table with COPY INTO (src/sql/bronze/load/).
 silver     loads a silver table (src/sql/silver/load/): every new bronze batch, oldest first, for an incremental
            table; a rebuild for a full-load table.
 gold       rebuilds a gold table from silver (src/sql/gold/load/), on every run.
-           Without --table, bronze, silver and gold load every table of their layer. The job runs one task per table
+ops        rebuilds an ops table (src/sql/ops/load/): rows, files, lag and quality checks of every ingest batch.
+           Without --table, each command loads every table of its layer. The job runs one task per table
            (databricks.yml), so the data path is visible in the job graph.
 --set      settings of src/common/config.py, applied before it is imported. Serverless job tasks have no cluster
            environment variables, so the job passes them as parameters, e.g.
@@ -117,7 +119,13 @@ def gold(args) -> dict:
     return sql.load_gold_table(spark, args.table) if args.table else sql.load_gold_tables(spark)
 
 
-TASKS = {"ingest": ingest, "setup": setup, "bronze": bronze, "silver": silver, "gold": gold}
+def ops(args) -> dict:
+    import sql
+    spark = _spark()
+    return sql.load_ops_table(spark, args.table) if args.table else sql.load_ops_tables(spark)
+
+
+TASKS = {"ingest": ingest, "setup": setup, "bronze": bronze, "silver": silver, "gold": gold, "ops": ops}
 
 
 def parser() -> argparse.ArgumentParser:
@@ -129,13 +137,15 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--source", choices=["tmdb", "musicbrainz", "listenbrainz"], required=True)
     s.add_argument("--date", type=_date, default="")
     import sql
-    sub.add_parser("setup", help="create the bronze, silver and gold tables in Unity Catalog if missing")
+    sub.add_parser("setup", help="create the bronze, silver, gold and ops tables in Unity Catalog if missing")
     s = sub.add_parser("bronze", help="load the new files of landing/ into a bronze table (default: all)")
     s.add_argument("--table", choices=sql.BRONZE_TABLES)
     s = sub.add_parser("silver", help="load a silver table from bronze (default: all)")
     s.add_argument("--table", choices=sql.SILVER_LOADED)
     s = sub.add_parser("gold", help="rebuild a gold table from silver (default: all)")
     s.add_argument("--table", choices=sql.GOLD_TABLES)
+    s = sub.add_parser("ops", help="rebuild an ops table: pipeline metrics and data quality (default: all)")
+    s.add_argument("--table", choices=sql.OPS_TABLES)
     return p
 
 
