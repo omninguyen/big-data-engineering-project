@@ -1,4 +1,4 @@
--- Loads new files of landing/musicbrainz/release_groups/ into the bronze table (pipeline.py tables).
+-- Loads new files of landing/musicbrainz/release_groups/ into the bronze table (pipeline.py bronze).
 -- COPY INTO remembers the files it loaded, so a rerun never loads a file twice.
 -- Each JSONL line is read as text and its fields are picked out by name: a missing field gives NULL instead of
 -- failing the load, and a value of the wrong type gives NULL (try_cast) instead of failing the whole run.

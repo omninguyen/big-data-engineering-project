@@ -1,4 +1,4 @@
--- Bronze table of the raw TMDB files (landing/tmdb/movies/). Created if missing by: pipeline.py tables
+-- Bronze table of the raw TMDB files (landing/tmdb/movies/). Created if missing by: pipeline.py bronze
 CREATE TABLE IF NOT EXISTS ${catalog}.bronze.tmdb_movies (
   id                 STRING         COMMENT 'TMDB id (sample:<n> for the offline sample set)',
   title              STRING,

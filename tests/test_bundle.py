@@ -1,5 +1,6 @@
 """databricks.yml: what the bundle deploys (only src/) and the daily ingest job."""
 import os
+import re
 import sys
 import unittest
 
@@ -31,7 +32,7 @@ class BundleTest(unittest.TestCase):
 
     def tasks_and_environments(self):
         tasks = {t["task_key"]: t for t in self.job["tasks"]}
-        self.assertEqual(set(tasks), {"ingest_tmdb", "ingest_musicbrainz", "bronze_tables"})
+        self.assertEqual(set(tasks), {"ingest_tmdb", "ingest_musicbrainz", "bronze_tables", "silver_tables"})
         return tasks, {e["environment_key"] for e in self.job["environments"]}
 
     def test_one_task_per_source_running_pipeline_py(self):
@@ -53,10 +54,20 @@ class BundleTest(unittest.TestCase):
         tasks, environments = self.tasks_and_environments()
         task = tasks["bronze_tables"]
         args = pipeline.parser().parse_args(task["spark_python_task"]["parameters"])
-        self.assertEqual(args.task, "tables")
+        self.assertEqual(args.task, "bronze")
         self.assertEqual(dict(args.settings), {"BRONZE_ROOT": "${var.bronze_root}"})  # tables/ goes next to it
         self.assertEqual({d["task_key"] for d in task["depends_on"]}, {"ingest_tmdb", "ingest_musicbrainz"})
         self.assertEqual(task["run_if"], "ALL_DONE")  # one failed source does not hold back the other
+
+    def test_silver_tables_after_bronze_tables(self):
+        tasks, environments = self.tasks_and_environments()
+        task = tasks["silver_tables"]
+        args = pipeline.parser().parse_args(task["spark_python_task"]["parameters"])
+        self.assertEqual(args.task, "silver")
+        self.assertEqual(dict(args.settings), {"SILVER_ROOT": "${var.silver_root}"})
+        self.assertEqual([d["task_key"] for d in task["depends_on"]], ["bronze_tables"])
+        self.assertNotIn("run_if", task)  # only after a successful bronze load
+        self.assertIn(task["environment_key"], environments)
         self.assertIn(task["environment_key"], environments)
 
     def test_daily_at_two_vietnam_time_paused_unless_switched_on(self):
@@ -67,9 +78,11 @@ class BundleTest(unittest.TestCase):
         self.assertEqual(self.bundle["variables"]["schedule_status"]["default"], "PAUSED")
 
     def test_no_workspace_or_storage_details_in_the_file(self):
-        for literal in ("abfss://bronze@", "azuredatabricks.net", "dfs.core.windows.net"):
-            self.assertNotIn(literal, self.text.replace("abfss://bronze@<account>.dfs.core.windows.net", ""))
-        self.assertNotIn("default", self.bundle["variables"]["bronze_root"])  # must come from the secret
+        text = re.sub(r"abfss://\w+@<account>\.dfs\.core\.windows\.net", "", self.text)  # placeholders in descriptions
+        for literal in ("abfss://", "azuredatabricks.net", "dfs.core.windows.net"):
+            self.assertNotIn(literal, text)
+        for variable in ("bronze_root", "silver_root"):  # must come from the secrets
+            self.assertNotIn("default", self.bundle["variables"][variable])
 
 
 if __name__ == "__main__":

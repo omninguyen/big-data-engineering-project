@@ -37,9 +37,12 @@ if not re.fullmatch(r"[A-Za-z0-9_]+", UC_CATALOG):
 # abfss://bronze@<account>.dfs.core.windows.net/landing. The Delta tables go next to it, in tables/.
 # Set by the job with --set BRONZE_ROOT=... A local folder also works, outside Databricks.
 BRONZE_ROOT = _get("BRONZE_ROOT").rstrip("/")
-# Delta tables of the bronze layer (pipeline.py tables): tables/ next to landing/, unless BRONZE_TABLES_ROOT is set.
+# Delta tables of the bronze layer (pipeline.py bronze): tables/ next to landing/, unless BRONZE_TABLES_ROOT is set.
 BRONZE_TABLES_ROOT = _get("BRONZE_TABLES_ROOT").rstrip("/") or (
     BRONZE_ROOT[:-len("landing")] + "tables" if BRONZE_ROOT.endswith("/landing") else "")
+# Delta tables of the silver layer: the ADLS container silver, e.g. abfss://silver@<account>.dfs.core.windows.net
+# (a Unity Catalog external location). Set by the job with --set SILVER_ROOT=...
+SILVER_ROOT = _get("SILVER_ROOT").rstrip("/")
 
 # ================= sources =================
 TMDB_API_KEY = _secret("TMDB_API_KEY", "tmdb-api-key")

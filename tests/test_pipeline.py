@@ -70,15 +70,21 @@ class ParserTest(unittest.TestCase):
 
 
 class TablesTest(unittest.TestCase):
-    def test_creates_then_loads_the_bronze_tables(self):
+    def run_layer(self, layer):
         session, calls = object(), []
         pyspark_sql = types.SimpleNamespace(SparkSession=types.SimpleNamespace(
             builder=types.SimpleNamespace(getOrCreate=lambda: session)))
         with mock.patch.dict(sys.modules, {"pyspark": types.ModuleType("pyspark"), "pyspark.sql": pyspark_sql}), \
-                mock.patch("sql.create_bronze_tables", side_effect=lambda s: calls.append(("create", s))), \
-                mock.patch("sql.load_bronze_tables", side_effect=lambda s: calls.append(("load", s)) or {"t": {}}):
-            self.assertEqual(pipeline.main(["tables"]), {"t": {}})
+                mock.patch(f"sql.create_{layer}_tables", side_effect=lambda s: calls.append(("create", s))), \
+                mock.patch(f"sql.load_{layer}_tables", side_effect=lambda s: calls.append(("load", s)) or {"t": 1}):
+            self.assertEqual(pipeline.main([layer]), {"t": 1})
         self.assertEqual(calls, [("create", session), ("load", session)])
+
+    def test_creates_then_loads_the_bronze_tables(self):
+        self.run_layer("bronze")
+
+    def test_creates_then_loads_the_silver_tables(self):
+        self.run_layer("silver")
 
 
 class IngestTest(unittest.TestCase):

@@ -1,4 +1,4 @@
-"""src/sql: the bronze CREATE TABLE and COPY INTO statements, and the runner with a fake Spark session."""
+"""src/sql: the bronze and silver statements, and the runner with a fake Spark session."""
 import os
 import re
 import sys
@@ -13,33 +13,56 @@ from common import config  # noqa: E402
 ROOT = "abfss://bronze@acct.dfs.core.windows.net/tables"
 LANDING = "abfss://bronze@acct.dfs.core.windows.net/landing"
 LINEAGE = {"dt", "batch_id", "_source_file", "_ingested_at", "_file_size", "_file_modified_at"}
+SILVER = "abfss://silver@acct.dfs.core.windows.net"
+ROOTS = {"bronze": ROOT, "silver": SILVER}
 SOURCES = {"tmdb_movies": "tmdb/movies", "musicbrainz_release_groups": "musicbrainz/release_groups"}
 
 
-def columns(name: str) -> list:
+def create(layer: str, name: str) -> str:
+    placeholder = {"bronze": "tables_root", "silver": "silver_root"}[layer]
+    return sql.render(layer, name, catalog="cat", **{placeholder: ROOTS[layer]})
+
+
+def columns(name: str, layer: str = "bronze") -> list:
     """Columns of the CREATE TABLE, in order."""
-    text = sql.render("bronze", name, catalog="cat", tables_root=ROOT)
-    return re.findall(r"^\s+(\w+)\s+[A-Z]", text, re.M)
+    return re.findall(r"^\s+(\w+)\s+[A-Z]", create(layer, name), re.M)
+
+
+def column_list(statement: str) -> list:
+    """The column list of the INSERT in a statement."""
+    found = re.search(r"INSERT(?: INTO \S+)?\s*\(([^)]*)\)", statement)
+    return [c.strip() for c in found.group(1).split(",")]
 
 
 def load(name: str) -> str:
     return sql.render("bronze/load", name, catalog="cat", landing_root=LANDING)
 
 
+def result(**counts):
+    return mock.Mock(asDict=mock.Mock(return_value=counts))
+
+
 class FakeSpark:
-    def __init__(self, locations=None):
-        self.statements, self.locations = [], locations or {}
+    """Records statements. Tables are where they should be; MERGE/INSERT insert 2 rows and update 1;
+    `batches` are the new bronze batches of each silver table."""
+    def __init__(self, locations=None, batches=None):
+        self.statements, self.locations, self.batches = [], locations or {}, batches or {}
 
     def sql(self, statement):
         self.statements.append(statement)
+        rows = []
         if statement.startswith("DESCRIBE DETAIL "):
             table = statement.split()[-1]
-            row = {"location": self.locations.get(table, f"{ROOT}/{table.split('.')[-1]}/")}
+            _, layer, name = table.split(".")
+            rows = [{"location": self.locations.get(table, f"{ROOTS[layer]}/{name}/")}]
         elif "COPY INTO" in statement:
-            row = mock.Mock(asDict=mock.Mock(return_value={"num_inserted_rows": 3}))
-        else:
-            row = None
-        return mock.Mock(first=mock.Mock(return_value=row))
+            rows = [result(num_inserted_rows=3)]
+        elif "EXCEPT" in statement:
+            table = re.search(r"table_name = '(\w+)'", statement).group(1)
+            rows = [{"batch_id": b} for b in self.batches.get(table, [])]
+        elif re.search(r"^(MERGE|INSERT) INTO", statement, re.M):
+            rows = [result(num_affected_rows=3, num_inserted_rows=2, num_updated_rows=1)]
+        return mock.Mock(first=mock.Mock(return_value=rows[0] if rows else None), collect=mock.Mock(return_value=rows))
 
 
 class StatementTest(unittest.TestCase):
@@ -137,6 +160,100 @@ class LoadTest(unittest.TestCase):
         for landing in ("", "/tmp/landing", f"{LANDING}' OR '1"):
             with self.subTest(landing=landing), self.assertRaises(ValueError):
                 self.load(FakeSpark(), landing)
+
+
+
+class SplitTest(unittest.TestCase):
+    def test_statements_end_with_a_semicolon_at_the_end_of_a_line(self):
+        view, merge = "-- header\nCREATE TEMP VIEW v AS SELECT 'a;b' AS x", "-- step 2\nMERGE INTO t USING v ON 1 = 1"
+        self.assertEqual(sql.statements(f"{view};\n\n{merge};\n-- end\n"), [view, merge])
+
+
+class SilverStatementTest(unittest.TestCase):
+    def test_external_delta_tables_in_the_silver_container_with_a_primary_key(self):
+        for name in sql.SILVER_TABLES:
+            with self.subTest(table=name):
+                text = create("silver", name)
+                self.assertNotIn("$", text)
+                self.assertIn(f"CREATE TABLE IF NOT EXISTS cat.silver.{name} (", text)
+                self.assertIn(f"LOCATION '{SILVER}/{name}'", text)
+                self.assertIn("USING DELTA", text)
+                key = re.search(r"PRIMARY KEY \(([^)]*)\)", text).group(1).split(", ")
+                for column in key:  # Unity Catalog needs NOT NULL key columns
+                    self.assertRegex(text, rf"\n  {column} +\w+ +NOT NULL")
+        files = [f[:-len(".sql")] for f in os.listdir(os.path.join(sql.HERE, "silver", "load"))]
+        self.assertEqual(sorted(files), sorted(sql.SILVER_INCREMENTAL))
+
+    def test_agreed_columns(self):
+        self.assertEqual(columns("movie", "silver"), [
+            "movie_id", "title", "original_title", "overview", "release_date", "original_language", "poster_path",
+            "adult", "checksum", "valid_from", "valid_to", "is_current", "batch_id", "_loaded_at"])
+        self.assertEqual(columns("movie_metric_daily", "silver"), [
+            "movie_id", "snapshot_date", "popularity", "vote_average", "vote_count", "in_popular", "in_top_rated",
+            "batch_id", "_loaded_at"])
+        self.assertIn("PRIMARY KEY (movie_id, valid_from)", create("silver", "movie"))
+        self.assertIn("PRIMARY KEY (movie_id, snapshot_date)", create("silver", "movie_metric_daily"))
+
+    def test_movie_scd2_load(self):
+        steps = sql.statements(sql.render("silver/load", "movie", catalog="cat", batch_id="B1"))
+        self.assertEqual(len(steps), 3)
+        view, close, insert = steps
+        self.assertIn("WHERE batch_id = 'B1' AND try_cast(id AS BIGINT) IS NOT NULL", view)  # no sample movies
+        self.assertIn("sha2(to_json(struct(title, original_title, overview, release_date, original_language, "
+                      "poster_path, adult)), 256)", view)
+        self.assertIn("WHEN MATCHED AND t.checksum <> s.checksum", close)
+        self.assertIn("valid_to = s.valid_from, is_current = false", close)
+        self.assertEqual(column_list(insert), columns("movie", "silver"))
+        self.assertIn("LEFT ANTI JOIN cat.silver.movie AS t ON t.movie_id = s.movie_id AND t.is_current", insert)
+
+    def test_metric_load_and_the_load_log(self):
+        steps = sql.statements(sql.render("silver/load", "movie_metric_daily", catalog="cat", batch_id="B1"))
+        self.assertEqual(len(steps), 1)
+        self.assertIn("WHEN MATCHED AND s.batch_id > t.batch_id THEN UPDATE", steps[0])  # a later batch of the day
+        self.assertEqual(column_list(steps[0]), columns("movie_metric_daily", "silver"))
+        logged = sql.render("silver", "log_batch", catalog="cat", table="movie", batch_id="B1",
+                            inserted="2", updated="1")
+        self.assertEqual(column_list(logged), columns("load_log", "silver"))
+        self.assertIn("VALUES ('movie', 'B1', 2, 1, current_timestamp())", logged)
+
+
+class SilverTest(unittest.TestCase):
+    def run_silver(self, spark, root=SILVER):
+        with mock.patch.object(config, "SILVER_ROOT", root), mock.patch.object(config, "UC_CATALOG", "cat"):
+            sql.create_silver_tables(spark)
+            return sql.load_silver_tables(spark)
+
+    def test_each_new_batch_oldest_first_then_recorded(self):
+        spark = FakeSpark(batches={"movie": ["B1", "B2"], "movie_metric_daily": ["B2"]})
+        with self.assertLogs("sql", "INFO"):
+            loaded = self.run_silver(spark)
+        self.assertEqual(loaded, {"cat.silver.movie": 2, "cat.silver.movie_metric_daily": 1})
+        logged = [s for s in spark.statements if "INSERT INTO cat.silver.load_log" in s]
+        self.assertEqual(len(logged), 3)
+        # the row counts of the batch's MERGE and INSERT, summed (the fake gives 2 inserted, 1 updated for each)
+        self.assertIn("VALUES ('movie', 'B1', 4, 2,", logged[0])
+        self.assertIn("VALUES ('movie', 'B2', 4, 2,", logged[1])
+        self.assertIn("VALUES ('movie_metric_daily', 'B2', 2, 1,", logged[2])
+        b1 = next(i for i, s in enumerate(spark.statements) if "batch_id = 'B1'" in s)
+        b2 = next(i for i, s in enumerate(spark.statements) if "batch_id = 'B2'" in s)
+        self.assertLess(b1, b2)
+
+    def test_nothing_new_loads_nothing(self):
+        spark = FakeSpark()
+        self.assertEqual(self.run_silver(spark), {"cat.silver.movie": 0, "cat.silver.movie_metric_daily": 0})
+        self.assertFalse([s for s in spark.statements if re.search(r"^(MERGE|INSERT) INTO", s, re.M)])
+
+    def test_odd_batch_id_or_root_fails(self):
+        with self.assertRaises(ValueError):
+            self.run_silver(FakeSpark(batches={"movie": ["B1' OR '1"]}))
+        for root in ("", "/tmp/silver", f"{SILVER}' OR '1"):
+            with self.subTest(root=root), self.assertRaises(ValueError):
+                self.run_silver(FakeSpark(), root)
+
+    def test_a_managed_table_of_the_same_name_fails(self):
+        spark = FakeSpark({"cat.silver.movie": "abfss://uc@acct.dfs.core.windows.net/__unitystorage/t/1"})
+        with self.assertRaisesRegex(RuntimeError, "drop it"):
+            self.run_silver(spark)
 
 
 if __name__ == "__main__":

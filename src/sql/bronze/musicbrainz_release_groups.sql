@@ -1,5 +1,5 @@
 -- Bronze table of the raw MusicBrainz files (landing/musicbrainz/release_groups/). Created if missing by:
--- pipeline.py tables
+-- pipeline.py bronze
 CREATE TABLE IF NOT EXISTS ${catalog}.bronze.musicbrainz_release_groups (
   id                  STRING         COMMENT 'MusicBrainz release group id (UUID)',
   title               STRING,
