@@ -254,3 +254,15 @@ resources:
           spark_python_task:
             python_file: ./src/pipeline.py
             parameters: ["gold", "--table", "bridge_media_genre"]
+        - task_key: gold_fact_media_metric_daily   # full load: daily metrics of movies and albums
+          depends_on:
+            - task_key: silver_movie_metric_daily
+            - task_key: silver_release_group_metric_daily
+            - task_key: gold_dim_media   # keeps only the media of the dimension
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 1800
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["gold", "--table", "fact_media_metric_daily"]

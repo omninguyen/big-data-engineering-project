@@ -392,6 +392,15 @@ class GoldStatementTest(unittest.TestCase):
         self.assertIn("FOREIGN KEY (genre_id) REFERENCES cat.gold.dim_genre", bridge)
         for dim in ("dim_media", "dim_genre"):  # a foreign key needs the table it refers to
             self.assertLess(sql.GOLD_TABLES.index(dim), sql.GOLD_TABLES.index("bridge_media_genre"))
+        fact = create("gold", "fact_media_metric_daily")
+        self.assertEqual(columns("fact_media_metric_daily", "gold"), [
+            "date_key", "media_key", "popularity", "rating", "votes", "listen_count", "listener_count",
+            "listen_count_change"])
+        self.assertIn("PRIMARY KEY (date_key, media_key)", fact)
+        self.assertIn("FOREIGN KEY (date_key) REFERENCES cat.gold.dim_date", fact)
+        self.assertIn("FOREIGN KEY (media_key) REFERENCES cat.gold.dim_media", fact)
+        for dim in ("dim_date", "dim_media"):
+            self.assertLess(sql.GOLD_TABLES.index(dim), sql.GOLD_TABLES.index("fact_media_metric_daily"))
 
     def test_full_loads(self):
         for name in sql.GOLD_TABLES:
@@ -431,6 +440,19 @@ class GoldStatementTest(unittest.TestCase):
         self.assertIn("FROM cat.silver.release_group_genre", bridge)
         # one primary genre per media, the lowest position, as dim_media.primary_genre
         self.assertIn("row_number() OVER (PARTITION BY media_key ORDER BY position) = 1  AS is_primary", bridge)
+
+    def test_fact(self):
+        text = sql.render("gold/load", "fact_media_metric_daily", catalog="cat")
+        self.assertIn("FROM cat.silver.movie_metric_daily", text)
+        self.assertIn("FROM cat.silver.release_group_metric_daily", text)
+        # the same keys as gold.dim_media and gold.dim_date
+        self.assertIn("concat('movie:', CAST(movie_id AS STRING))  AS media_key", text)
+        self.assertIn("concat('music:', release_group_id),", text)
+        self.assertIn("CAST(date_format(snapshot_date, 'yyyyMMdd') AS INT)  AS date_key", text)
+        self.assertIn("WHERE media_key IN (SELECT media_key FROM cat.gold.dim_media)", text)  # every row has its dim
+        # listens of the day from the all-time totals
+        self.assertIn("listen_count - lag(listen_count) OVER (PARTITION BY release_group_id ORDER BY snapshot_date)",
+                      text)
 
 
 class GoldTest(unittest.TestCase):

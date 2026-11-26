@@ -29,7 +29,8 @@ SILVER_INCREMENTAL = {  # silver table: its bronze table
     "release_group_metric_daily": "listenbrainz_release_group_popularity"}
 SILVER_FULL = ["genre", "movie_genre", "release_group_genre", "release_group_artist"]
 SILVER_LOADED = [*SILVER_INCREMENTAL, *SILVER_FULL]  # every silver table with a load (load_log is written by them)
-GOLD_TABLES = ["dim_date", "dim_media", "dim_genre", "bridge_media_genre"]  # full loads; dims before their foreign keys
+GOLD_TABLES = ["dim_date", "dim_media", "dim_genre", "bridge_media_genre",  # full loads; dims before their foreign keys
+               "fact_media_metric_daily"]
 BATCH_ID = re.compile(r"[0-9A-Za-z-]+")
 
 
