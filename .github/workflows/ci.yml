@@ -1,0 +1,36 @@
+# Unit tests of the ingest code. Runs when a merged pull request changes src/ (a push to main), or by hand:
+# Actions -> ci -> Run workflow. Dev branches and pull requests run nothing.
+name: ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: pip install "requests>=2.31,<3"
+      - name: Compile
+        run: python -m compileall -q src
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
