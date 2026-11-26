@@ -30,6 +30,8 @@ DAG = {
     "silver_release_group_metric_daily": {"bronze_listenbrainz_release_group_popularity"},
     "gold_dim_date": {"setup_tables"},  # the calendar needs no source
     "gold_dim_media": {"silver_movie_genre", "silver_release_group_genre"},  # after movie, release_group, genre
+    "gold_dim_genre": {"silver_genre"},
+    "gold_bridge_media_genre": {"silver_movie_genre", "silver_release_group_genre"},
 }
 
 try:

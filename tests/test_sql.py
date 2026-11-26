@@ -383,6 +383,15 @@ class GoldStatementTest(unittest.TestCase):
             "media_key", "media_id", "media_type", "title", "creator", "release_date", "release_year",
             "release_decade", "primary_genre", "genres", "language", "source"])
         self.assertIn("PRIMARY KEY (media_key)", create("gold", "dim_media"))
+        self.assertEqual(columns("dim_genre", "gold"), ["genre_id", "genre_name", "media_type"])
+        self.assertIn("PRIMARY KEY (genre_id)", create("gold", "dim_genre"))
+        bridge = create("gold", "bridge_media_genre")
+        self.assertEqual(columns("bridge_media_genre", "gold"), ["media_key", "genre_id", "is_primary"])
+        self.assertIn("PRIMARY KEY (media_key, genre_id)", bridge)
+        self.assertIn("FOREIGN KEY (media_key) REFERENCES cat.gold.dim_media", bridge)
+        self.assertIn("FOREIGN KEY (genre_id) REFERENCES cat.gold.dim_genre", bridge)
+        for dim in ("dim_media", "dim_genre"):  # a foreign key needs the table it refers to
+            self.assertLess(sql.GOLD_TABLES.index(dim), sql.GOLD_TABLES.index("bridge_media_genre"))
 
     def test_full_loads(self):
         for name in sql.GOLD_TABLES:
@@ -409,6 +418,19 @@ class GoldStatementTest(unittest.TestCase):
         self.assertIn("concat('music:', rg.release_group_id), rg.position", text)
         self.assertIn("sort_array(collect_list(struct(position, name)))", text)  # primary genre first
         self.assertIn("LEFT JOIN genres AS g ON g.media_key = m.media_key", text)  # media without genres are kept
+
+    def test_genre_and_bridge(self):
+        genre = sql.render("gold/load", "dim_genre", catalog="cat")
+        self.assertIn("FROM cat.silver.genre", genre)
+        self.assertIn("CASE source WHEN 'tmdb' THEN 'movie' WHEN 'musicbrainz' THEN 'music' END", genre)
+        bridge = sql.render("gold/load", "bridge_media_genre", catalog="cat")
+        # the same media_key as gold.dim_media
+        self.assertIn("concat('movie:', CAST(movie_id AS STRING)) AS media_key, genre_id, position", bridge)
+        self.assertIn("concat('music:', release_group_id), genre_id, position", bridge)
+        self.assertIn("FROM cat.silver.movie_genre", bridge)
+        self.assertIn("FROM cat.silver.release_group_genre", bridge)
+        # one primary genre per media, the lowest position, as dim_media.primary_genre
+        self.assertIn("row_number() OVER (PARTITION BY media_key ORDER BY position) = 1  AS is_primary", bridge)
 
 
 class GoldTest(unittest.TestCase):
