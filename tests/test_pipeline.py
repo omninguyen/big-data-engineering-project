@@ -28,7 +28,7 @@ class ParserTest(unittest.TestCase):
         with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
             pipeline.parser().parse_args(["ingest", "--source", "tmdb", "--date", "../2026"])
 
-    def test_only_ingest_exists(self):
+    def test_unknown_tasks_are_rejected(self):
         for argv in (["recommend"], ["transform"], ["ingest", "--source", "kafka"]):
             with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
                 pipeline.parser().parse_args(argv)
@@ -49,6 +49,17 @@ class ParserTest(unittest.TestCase):
                 mock.patch.dict(os.environ, {}, clear=False):
             pipeline.main(["--set", "UC_CATALOG=dev_cat", "ingest", "--source", "tmdb"])
         self.assertEqual(seen, {"cat": "dev_cat"})
+
+
+class TablesTest(unittest.TestCase):
+    def test_creates_the_bronze_tables_with_the_spark_session(self):
+        session = object()
+        pyspark_sql = types.SimpleNamespace(SparkSession=types.SimpleNamespace(
+            builder=types.SimpleNamespace(getOrCreate=lambda: session)))
+        with mock.patch.dict(sys.modules, {"pyspark": types.ModuleType("pyspark"), "pyspark.sql": pyspark_sql}), \
+                mock.patch("sql.create_bronze_tables", return_value=["t"]) as create:
+            self.assertEqual(pipeline.main(["tables"]), ["t"])
+        create.assert_called_once_with(session)
 
 
 class IngestTest(unittest.TestCase):

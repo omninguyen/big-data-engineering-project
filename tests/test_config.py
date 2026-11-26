@@ -6,8 +6,8 @@ import unittest
 
 SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
 CLEAN = {k: v for k, v in os.environ.items()
-         if k not in ("DATABRICKS_RUNTIME_VERSION", "UC_CATALOG", "BRONZE_ROOT", "MOVIE_SOURCE", "MOVIE_FILE",
-                      "TMDB_API_KEY")}
+         if k not in ("DATABRICKS_RUNTIME_VERSION", "UC_CATALOG", "BRONZE_ROOT", "BRONZE_TABLES_ROOT", "MOVIE_SOURCE",
+                      "MOVIE_FILE", "TMDB_API_KEY")}
 
 
 def run(code: str, **env) -> subprocess.CompletedProcess:
@@ -33,6 +33,15 @@ class ConfigTest(unittest.TestCase):
                                   BRONZE_ROOT="abfss://bronze@acct.dfs.core.windows.net/"),
                          "abfss://bronze@acct.dfs.core.windows.net "
                          "abfss://bronze@acct.dfs.core.windows.net/manual/tmdb_movies.json")
+
+    def test_tables_next_to_landing(self):
+        container = "abfss://bronze@acct.dfs.core.windows.net"
+        self.assertEqual(self.out("print(config.BRONZE_TABLES_ROOT)", BRONZE_ROOT=f"{container}/landing/"),
+                         f"{container}/tables")
+        self.assertEqual(self.out("print(repr(config.BRONZE_TABLES_ROOT))", BRONZE_ROOT=container), "''")
+        self.assertEqual(self.out("print(config.BRONZE_TABLES_ROOT)", BRONZE_ROOT=f"{container}/landing",
+                                  BRONZE_TABLES_ROOT="abfss://silver@acct.dfs.core.windows.net/t/"),
+                         "abfss://silver@acct.dfs.core.windows.net/t")
 
     def test_secret_from_environment_without_databricks(self):
         self.assertEqual(self.out("print(config.TMDB_API_KEY)", TMDB_API_KEY=" k123 "), "k123")

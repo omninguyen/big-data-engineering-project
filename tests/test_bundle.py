@@ -29,11 +29,15 @@ class BundleTest(unittest.TestCase):
         self.assertTrue(workspace["file_path"].startswith("/Shared/"))
         self.assertNotIn("host", workspace)  # from the DATABRICKS_HOST secret
 
-    def test_one_task_per_source_running_pipeline_py(self):
+    def tasks_and_environments(self):
         tasks = {t["task_key"]: t for t in self.job["tasks"]}
-        self.assertEqual(set(tasks), {"ingest_tmdb", "ingest_musicbrainz"})
-        environments = {e["environment_key"] for e in self.job["environments"]}
-        for key, task in tasks.items():
+        self.assertEqual(set(tasks), {"ingest_tmdb", "ingest_musicbrainz", "bronze_tables"})
+        return tasks, {e["environment_key"] for e in self.job["environments"]}
+
+    def test_one_task_per_source_running_pipeline_py(self):
+        tasks, environments = self.tasks_and_environments()
+        for key in ("ingest_tmdb", "ingest_musicbrainz"):
+            task = tasks[key]
             with self.subTest(task=key):
                 python = task["spark_python_task"]
                 self.assertEqual(python["python_file"], "./src/pipeline.py")
@@ -44,6 +48,15 @@ class BundleTest(unittest.TestCase):
                 self.assertIn(task["environment_key"], environments)  # required on serverless
                 self.assertGreaterEqual(task["max_retries"], 1)
         self.assertTrue(os.path.isfile(os.path.join(ROOT, "src", "pipeline.py")))
+
+    def test_bronze_tables_after_both_ingests(self):
+        tasks, environments = self.tasks_and_environments()
+        task = tasks["bronze_tables"]
+        args = pipeline.parser().parse_args(task["spark_python_task"]["parameters"])
+        self.assertEqual(args.task, "tables")
+        self.assertEqual(dict(args.settings), {"BRONZE_ROOT": "${var.bronze_root}"})  # tables/ goes next to it
+        self.assertEqual({d["task_key"] for d in task["depends_on"]}, {"ingest_tmdb", "ingest_musicbrainz"})
+        self.assertIn(task["environment_key"], environments)
 
     def test_daily_at_two_vietnam_time_paused_unless_switched_on(self):
         schedule = self.job["schedule"]
