@@ -58,3 +58,5 @@ MB_GENRES = [g.strip() for g in _get(
     "MB_GENRES", "rock,pop,jazz,electronic,hip hop,classical,metal,folk,r&b,indie,country,soul"
 ).split(",") if g.strip()]
 MB_PAGES_PER_GENRE = int(_get("MB_PAGES_PER_GENRE", "2"))
+LB_BASE_URL = _get("LB_BASE_URL", "https://api.listenbrainz.org").rstrip("/")  # ListenBrainz, no token needed
+LB_BATCH_SIZE = int(_get("LB_BATCH_SIZE", "100"))  # albums per popularity request (the documented limit may be higher)

@@ -71,6 +71,16 @@ resources:
           spark_python_task:
             python_file: ./src/pipeline.py
             parameters: ["--set", "BRONZE_ROOT=${var.bronze_root}", "ingest", "--source", "musicbrainz"]
+        - task_key: ingest_listenbrainz   # listen counts of the albums known to silver
+          depends_on:
+            - task_key: silver_release_group
+          environment_key: default
+          max_retries: 2
+          min_retry_interval_millis: 300000
+          timeout_seconds: 1800
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["--set", "BRONZE_ROOT=${var.bronze_root}", "ingest", "--source", "listenbrainz"]
         - task_key: bronze_tmdb_movies   # COPY INTO from landing/
           depends_on:
             - task_key: ingest_tmdb
