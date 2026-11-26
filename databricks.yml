@@ -233,3 +233,24 @@ resources:
           spark_python_task:
             python_file: ./src/pipeline.py
             parameters: ["gold", "--table", "dim_media"]
+        - task_key: gold_dim_genre   # full load
+          depends_on:
+            - task_key: silver_genre
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 900
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["gold", "--table", "dim_genre"]
+        - task_key: gold_bridge_media_genre   # full load: the genres of each movie and album
+          depends_on:
+            - task_key: silver_movie_genre
+            - task_key: silver_release_group_genre
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 1800
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["gold", "--table", "bridge_media_genre"]
