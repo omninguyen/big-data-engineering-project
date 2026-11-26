@@ -43,6 +43,9 @@ BRONZE_TABLES_ROOT = _get("BRONZE_TABLES_ROOT").rstrip("/") or (
 # Delta tables of the silver layer: the ADLS container silver, e.g. abfss://silver@<account>.dfs.core.windows.net
 # (a Unity Catalog external location). Set by the job with --set SILVER_ROOT=...
 SILVER_ROOT = _get("SILVER_ROOT").rstrip("/")
+# Delta tables of the gold layer: the ADLS container gold, e.g. abfss://gold@<account>.dfs.core.windows.net
+# (a Unity Catalog external location). Set by the job with --set GOLD_ROOT=...
+GOLD_ROOT = _get("GOLD_ROOT").rstrip("/")
 
 # ================= sources =================
 TMDB_API_KEY = _secret("TMDB_API_KEY", "tmdb-api-key")

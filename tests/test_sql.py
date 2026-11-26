@@ -1,4 +1,4 @@
-"""src/sql: the bronze and silver statements, and the runner with a fake Spark session."""
+"""src/sql: the bronze, silver and gold statements, and the runner with a fake Spark session."""
 import os
 import re
 import sys
@@ -14,13 +14,14 @@ ROOT = "abfss://bronze@acct.dfs.core.windows.net/tables"
 LANDING = "abfss://bronze@acct.dfs.core.windows.net/landing"
 LINEAGE = {"dt", "batch_id", "_source_file", "_ingested_at", "_file_size", "_file_modified_at"}
 SILVER = "abfss://silver@acct.dfs.core.windows.net"
-ROOTS = {"bronze": ROOT, "silver": SILVER}
+GOLD = "abfss://gold@acct.dfs.core.windows.net"
+ROOTS = {"bronze": ROOT, "silver": SILVER, "gold": GOLD}
 SOURCES = {"tmdb_movies": "tmdb/movies", "musicbrainz_release_groups": "musicbrainz/release_groups",
            "listenbrainz_release_group_popularity": "listenbrainz/release_group_popularity"}
 
 
 def create(layer: str, name: str) -> str:
-    placeholder = {"bronze": "tables_root", "silver": "silver_root"}[layer]
+    placeholder = {"bronze": "tables_root", "silver": "silver_root", "gold": "gold_root"}[layer]
     return sql.render(layer, name, catalog="cat", **{placeholder: ROOTS[layer]})
 
 
@@ -357,18 +358,92 @@ class SilverTest(unittest.TestCase):
 
 
 
+class GoldStatementTest(unittest.TestCase):
+    def test_external_delta_tables_in_the_gold_container_with_a_primary_key(self):
+        for name in sql.GOLD_TABLES:
+            with self.subTest(table=name):
+                text = create("gold", name)
+                self.assertNotIn("$", text)
+                self.assertIn(f"CREATE TABLE IF NOT EXISTS cat.gold.{name} (", text)
+                self.assertIn(f"LOCATION '{GOLD}/{name}'", text)
+                self.assertIn("USING DELTA", text)
+                key = re.search(r"PRIMARY KEY \(([^)]*)\)", text).group(1).split(", ")
+                for column in key:  # Unity Catalog needs NOT NULL key columns
+                    self.assertRegex(text, rf"\n  {column} +\w+ +NOT NULL")
+        for folder in ("gold", "gold/load"):
+            files = [f[:-len(".sql")] for f in os.listdir(os.path.join(sql.HERE, folder)) if f.endswith(".sql")]
+            self.assertEqual(sorted(files), sorted(sql.GOLD_TABLES), folder)
+
+    def test_agreed_columns(self):
+        self.assertEqual(columns("dim_date", "gold"), [
+            "date_key", "date", "year", "quarter", "month", "month_name", "day", "day_of_week", "day_name",
+            "is_weekend"])
+        self.assertIn("PRIMARY KEY (date_key)", create("gold", "dim_date"))
+        self.assertEqual(columns("dim_media", "gold"), [
+            "media_key", "media_id", "media_type", "title", "creator", "release_date", "release_year",
+            "release_decade", "primary_genre", "genres", "language", "source"])
+        self.assertIn("PRIMARY KEY (media_key)", create("gold", "dim_media"))
+
+    def test_full_loads(self):
+        for name in sql.GOLD_TABLES:
+            with self.subTest(table=name):
+                steps = sql.statements(sql.render("gold/load", name, catalog="cat"))
+                self.assertEqual(len(steps), 1)
+                self.assertRegex(steps[0], rf"INSERT OVERWRITE cat\.gold\.{name}\s*\(")  # one write replaces it
+                self.assertEqual(column_list(steps[0]), columns(name, "gold"))
+
+    def test_dim_date(self):
+        text = sql.render("gold/load", "dim_date", catalog="cat")
+        self.assertIn("CAST(date_format(d, 'yyyyMMdd') AS INT)  AS date_key", text)
+        self.assertIn("weekday(d) + 1", text)  # 1 = Monday ... 7 = Sunday
+        self.assertIn("sequence(DATE'1900-01-01', make_date(year(current_date()) + 1, 12, 31)", text)
+
+    def test_dim_media(self):
+        text = sql.render("gold/load", "dim_media", catalog="cat")
+        for table in ("movie", "release_group"):  # the current version only
+            self.assertIn(f"FROM cat.silver.{table}\n  WHERE is_current", text)
+        # the same media_key in the media and in their genres
+        self.assertIn("concat('movie:', CAST(movie_id AS STRING))  AS media_key", text)
+        self.assertIn("concat('movie:', CAST(mg.movie_id AS STRING)) AS media_key", text)
+        self.assertIn("concat('music:', release_group_id), release_group_id, 'music'", text)
+        self.assertIn("concat('music:', rg.release_group_id), rg.position", text)
+        self.assertIn("sort_array(collect_list(struct(position, name)))", text)  # primary genre first
+        self.assertIn("LEFT JOIN genres AS g ON g.media_key = m.media_key", text)  # media without genres are kept
+
+
+class GoldTest(unittest.TestCase):
+    def run_gold(self, spark, root=GOLD):
+        with mock.patch.object(config, "GOLD_ROOT", root), mock.patch.object(config, "UC_CATALOG", "cat"):
+            sql.create_gold_tables(spark)
+            return sql.load_gold_tables(spark)
+
+    def test_rebuilds_every_table(self):
+        spark = FakeSpark()
+        with self.assertLogs("sql", "INFO"):
+            self.assertEqual(self.run_gold(spark), {f"cat.gold.{name}": {"rows": 2} for name in sql.GOLD_TABLES})
+        self.assertEqual(len([s for s in spark.statements if "INSERT OVERWRITE cat.gold." in s]), len(sql.GOLD_TABLES))
+
+    def test_odd_root_or_a_managed_table_fails(self):
+        for root in ("", "/tmp/gold", f"{GOLD}' OR '1"):
+            with self.subTest(root=root), self.assertRaises(ValueError):
+                self.run_gold(FakeSpark(), root)
+        spark = FakeSpark({"cat.gold.dim_media": "abfss://uc@acct.dfs.core.windows.net/__unitystorage/t/1"})
+        with self.assertRaisesRegex(RuntimeError, "drop it"):
+            self.run_gold(spark)
+
+
 class OneTableTest(unittest.TestCase):
     """One job task per table: setup creates every table, then each task loads one."""
     def patched(self):
         return mock.patch.multiple(config, BRONZE_TABLES_ROOT=ROOT, BRONZE_ROOT=LANDING, SILVER_ROOT=SILVER,
-                                   UC_CATALOG="cat")
+                                   GOLD_ROOT=GOLD, UC_CATALOG="cat")
 
-    def test_setup_creates_bronze_then_silver(self):
+    def test_setup_creates_bronze_then_silver_then_gold(self):
         spark = FakeSpark()
         with self.patched(), self.assertLogs("sql", "INFO"):
             tables = sql.create_tables(spark)
         self.assertEqual(tables, [f"cat.bronze.{t}" for t in sql.BRONZE_TABLES] +
-                         [f"cat.silver.{t}" for t in sql.SILVER_TABLES])
+                         [f"cat.silver.{t}" for t in sql.SILVER_TABLES] + [f"cat.gold.{t}" for t in sql.GOLD_TABLES])
 
     def test_one_bronze_table(self):
         spark = FakeSpark()
@@ -387,9 +462,17 @@ class OneTableTest(unittest.TestCase):
             self.assertEqual(sql.load_silver_table(spark, "genre"), {"rows": 2})
         self.assertEqual(len(spark.statements), 1)
 
+    def test_one_gold_table(self):
+        spark = FakeSpark()
+        with self.patched(), self.assertLogs("sql", "INFO"):
+            self.assertEqual(sql.load_gold_table(spark, "dim_media"), {"rows": 2})
+        self.assertEqual(len(spark.statements), 1)
+        self.assertIn("INSERT OVERWRITE cat.gold.dim_media", spark.statements[0])
+
     def test_unknown_table_fails(self):
         with self.patched():
-            for load, name in ((sql.load_bronze_table, "movie"), (sql.load_silver_table, "load_log")):
+            for load, name in ((sql.load_bronze_table, "movie"), (sql.load_silver_table, "load_log"),
+                               (sql.load_gold_table, "movie")):
                 with self.subTest(name=name), self.assertRaises(ValueError):
                     load(FakeSpark(), name)
 

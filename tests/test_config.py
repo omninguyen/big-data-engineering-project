@@ -7,6 +7,7 @@ import unittest
 SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
 CLEAN = {k: v for k, v in os.environ.items()
          if k not in ("DATABRICKS_RUNTIME_VERSION", "UC_CATALOG", "BRONZE_ROOT", "BRONZE_TABLES_ROOT", "SILVER_ROOT",
+                      "GOLD_ROOT",
                       "MOVIE_SOURCE", "MOVIE_FILE", "TMDB_API_KEY")}
 
 
@@ -47,6 +48,11 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(self.out("print(repr(config.SILVER_ROOT))"), "''")  # from the job (--set SILVER_ROOT=...)
         self.assertEqual(self.out("print(config.SILVER_ROOT)", SILVER_ROOT="abfss://silver@acct.dfs.core.windows.net/"),
                          "abfss://silver@acct.dfs.core.windows.net")
+
+    def test_gold_root(self):
+        self.assertEqual(self.out("print(repr(config.GOLD_ROOT))"), "''")  # from the job (--set GOLD_ROOT=...)
+        self.assertEqual(self.out("print(config.GOLD_ROOT)", GOLD_ROOT="abfss://gold@acct.dfs.core.windows.net/"),
+                         "abfss://gold@acct.dfs.core.windows.net")
 
     def test_secret_from_environment_without_databricks(self):
         self.assertEqual(self.out("print(config.TMDB_API_KEY)", TMDB_API_KEY=" k123 "), "k123")

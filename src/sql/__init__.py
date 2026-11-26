@@ -1,4 +1,4 @@
-"""SQL of the Unity Catalog tables, run with spark.sql (pipeline.py setup, bronze and silver: one job task per table).
+"""SQL of the Unity Catalog tables, run with spark.sql (pipeline.py setup, bronze, silver, gold: a job task per table).
 
 src/sql/bronze/<table>.sql       creates <catalog>.bronze.<table>, an external Delta table in <tables root>/<table>
 src/sql/bronze/load/<table>.sql  loads the new files of landing/ into it with COPY INTO
@@ -6,7 +6,10 @@ src/sql/silver/<table>.sql       creates <catalog>.silver.<table>, an external D
 src/sql/silver/load/<table>.sql  incremental tables: loads one bronze batch; run once per new batch, oldest first,
                                  and recorded in silver.load_log (the watermark: a recorded batch is not loaded again)
                                  full-load tables: rebuilds the whole table, on every run, after the incremental ones
-${...} placeholders are filled in from common/config.py (UC_CATALOG, BRONZE_TABLES_ROOT, BRONZE_ROOT, SILVER_ROOT),
+src/sql/gold/<table>.sql         creates <catalog>.gold.<table>, an external Delta table in <gold root>/<table>
+src/sql/gold/load/<table>.sql    rebuilds it from silver on every run (full load)
+${...} placeholders are filled in from common/config.py (UC_CATALOG, BRONZE_TABLES_ROOT, BRONZE_ROOT, SILVER_ROOT,
+GOLD_ROOT),
 so the files hold no workspace or storage details. A file may hold several statements, each ending with ';' at the
 end of a line.
 """
@@ -26,6 +29,7 @@ SILVER_INCREMENTAL = {  # silver table: its bronze table
     "release_group_metric_daily": "listenbrainz_release_group_popularity"}
 SILVER_FULL = ["genre", "movie_genre", "release_group_genre", "release_group_artist"]
 SILVER_LOADED = [*SILVER_INCREMENTAL, *SILVER_FULL]  # every silver table with a load (load_log is written by them)
+GOLD_TABLES = ["dim_date", "dim_media"]  # every gold table is a full load
 BATCH_ID = re.compile(r"[0-9A-Za-z-]+")
 
 
@@ -96,10 +100,16 @@ def create_silver_tables(spark) -> list:
     return _create(spark, "silver", SILVER_TABLES, root, "silver_root")
 
 
+def create_gold_tables(spark) -> list:
+    from common import config
+    root = _abfss("GOLD_ROOT", config.GOLD_ROOT, "abfss://gold@<account>.dfs.core.windows.net")
+    return _create(spark, "gold", GOLD_TABLES, root, "gold_root")
+
+
 def create_tables(spark) -> list:
-    """Create every bronze and silver table if missing, in one job task (setup_tables) before the loads: tasks
+    """Create every bronze, silver and gold table if missing, in one job task (setup_tables) before the loads: tasks
     running in parallel would otherwise create the shared silver.load_log at the same time."""
-    return create_bronze_tables(spark) + create_silver_tables(spark)
+    return create_bronze_tables(spark) + create_silver_tables(spark) + create_gold_tables(spark)
 
 
 def _run(spark, text: str) -> dict:
@@ -143,3 +153,19 @@ def load_silver_tables(spark) -> dict:
     Returns {table: {"batches": n} or {"rows": n}}."""
     from common import config
     return {f"{config.UC_CATALOG}.silver.{name}": load_silver_table(spark, name) for name in SILVER_LOADED}
+
+
+def load_gold_table(spark, name: str) -> dict:
+    """Rebuild one gold table from silver (full load). Returns {"rows": n}."""
+    from common import config
+    if name not in GOLD_TABLES:
+        raise ValueError(f"unknown gold table {name!r}, expected one of {GOLD_TABLES}")
+    counts = _run(spark, render("gold/load", name, catalog=config.UC_CATALOG))
+    log.info("gold.%s: full load, %s rows", name, counts["num_inserted_rows"])
+    return {"rows": counts["num_inserted_rows"]}
+
+
+def load_gold_tables(spark) -> dict:
+    """Rebuild every gold table. Returns {table: {"rows": n}}."""
+    from common import config
+    return {f"{config.UC_CATALOG}.gold.{name}": load_gold_table(spark, name) for name in GOLD_TABLES}
