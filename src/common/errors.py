@@ -1,11 +1,11 @@
 """Shared exceptions for the ingest steps.
 
-Each type tells the job runner (src/jobs/*) how to react:
-    MissingCredentials  optional source has no credentials configured -> skip, not an error
-    SourceError         source failed or returned unusable data -> fail the task so it is retried and alerted
+Each type tells the batch runner (src/ingest/runner.py) how to react:
+    MissingCredentials  optional source has no credentials configured -> batch SKIPPED, not an error
+    SourceError         source failed or returned unusable data -> batch FAILED, the task fails and is retried
 
 Messages of every PipelineError subclass are redacted (api_key=..., Bearer ...). Exceptions raised by
-libraries (requests, boto3) are not: when wrapping one, use `raise ... from None` so the traceback does
+libraries (requests) are not: when wrapping one, use `raise ... from None` so the traceback does
 not print the original error, which may contain the full URL.
 """
 import re

@@ -29,12 +29,22 @@ def _secret(name: str, key: str, default: str = "") -> str:
         return default
 
 
-# ================= Unity Catalog =================
-# Raw files land in the volume <catalog>.bronze.landing
+# ================= bronze (ADLS) =================
 UC_CATALOG = _get("UC_CATALOG", "big_data_engineering")
 if not re.fullmatch(r"[A-Za-z0-9_]+", UC_CATALOG):
     raise ValueError(f"UC_CATALOG may only contain letters, digits and underscores, got {UC_CATALOG!r}")
-UC_LANDING_ROOT = (_get("UC_LANDING_ROOT") or f"/Volumes/{UC_CATALOG}/bronze/landing").rstrip("/")
+# Raw files: the external volume <catalog>.bronze.landing on the ADLS container bronze
+# (abfss://bronze@<account>.dfs.core.windows.net/landing). Layout: src/ingest/__init__.py.
+BRONZE_ROOT = (_get("BRONZE_ROOT") or f"/Volumes/{UC_CATALOG}/bronze/landing").rstrip("/")
+BRONZE_MAX_RECORDS_PER_FILE = int(_get("BRONZE_MAX_RECORDS_PER_FILE", "10000"))
+
+# ================= run metadata (batch manifest) =================
+# Set by the Databricks job task, e.g. --set JOB_RUN_ID={{job.run_id}}; empty when run by hand.
+JOB_ID = _get("JOB_ID")  # {{job.id}}
+JOB_RUN_ID = _get("JOB_RUN_ID")  # {{job.run_id}}
+TASK_RUN_ID = _get("TASK_RUN_ID")  # {{task.run_id}}
+JOB_TRIGGER = _get("JOB_TRIGGER")  # {{job.trigger.type}}
+CODE_VERSION = _get("CODE_VERSION")  # commit SHA; empty -> the file src/VERSION, if deployed
 
 # ================= sources =================
 TMDB_API_KEY = _secret("TMDB_API_KEY", "tmdb-api-key")
@@ -43,7 +53,7 @@ TMDB_BASE_URL = _get("TMDB_BASE_URL", "https://api.themoviedb.org/3").rstrip("/"
 MOVIE_SOURCE = _get("MOVIE_SOURCE", "tmdb").lower()  # tmdb | file (exported by the browser) | sample (demo set)
 if MOVIE_SOURCE not in ("tmdb", "file", "sample"):
     raise ValueError(f"MOVIE_SOURCE must be tmdb, file or sample, got {MOVIE_SOURCE!r}")
-MOVIE_FILE = _get("MOVIE_FILE") or f"{UC_LANDING_ROOT}/manual/tmdb_movies.json"
+MOVIE_FILE = _get("MOVIE_FILE") or f"{BRONZE_ROOT}/manual/tmdb_movies.json"
 TMDB_PAGES = int(_get("TMDB_PAGES", "20"))
 MB_CONTACT = _get("MB_CONTACT", "you@example.com")  # MusicBrainz requires a contact in the User-Agent
 MB_GENRES = [g.strip() for g in _get(

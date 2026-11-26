@@ -1,6 +1,6 @@
 """Offline demo movies, used when MOVIE_SOURCE=sample (e.g. TMDB is unreachable from your network).
 
-Same bronze layout and field names as the TMDB ingest, so the Spark job needs no special path.
+Source "tmdb", entity movies, like the TMDB ingest; params() marks the batch as demo data in the manifest.
 Only well-known public facts are included: title, original language, genres, release YEAR.
   - ratings, votes and popularity are left empty on purpose (no real numbers available offline);
   - release_date uses YYYY-01-01, so only the year is meaningful;
@@ -8,7 +8,8 @@ Only well-known public facts are included: title, original language, genres, rel
 This is demo data: say so in any report, and switch back to MOVIE_SOURCE=tmdb for real data.
 """
 import logging
-from datetime import datetime, timezone
+
+from ingest.batch import Page
 
 log = logging.getLogger(__name__)
 
@@ -92,18 +93,16 @@ MOVIES = [
 
 
 def records() -> list:
-    now = datetime.now(timezone.utc).isoformat()
     return [{"id": f"sample:{i}", "title": title, "release_date": f"{year}-01-01",
              "original_language": lang, "genres": genres.split(","),
-             "popularity": None, "vote_average": None, "vote_count": None,
-             "_endpoint": "sample", "_ingested_at": now}
+             "popularity": None, "vote_average": None, "vote_count": None}
             for i, (title, year, lang, genres) in enumerate(MOVIES, start=1)]
 
 
-def run(ds: str) -> int:
-    from common import storage  # imported here so records() stays importable on its own
-    key = f"bronze/tmdb/movies/dt={ds}/movies.jsonl"
-    n = storage.put_jsonl(key, records())
-    log.warning("MOVIE_SOURCE=sample: wrote %s DEMO movies to %s (no ratings/popularity)", n,
-                storage.volume_path(key))
-    return n
+def params() -> dict:
+    return {"movie_source": "sample", "demo": True}
+
+
+def extract(batch):
+    log.warning("MOVIE_SOURCE=sample: DEMO movies (no ratings/popularity)")
+    yield Page("movies", records(), {"sample": True})

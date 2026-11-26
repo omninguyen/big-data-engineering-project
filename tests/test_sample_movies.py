@@ -4,7 +4,8 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."  , "src"))
 
-from batch import sample_movies  # noqa: E402
+from ingest.batch import Batch  # noqa: E402
+from ingest.sources import sample_movies  # noqa: E402
 
 
 class SampleMoviesTest(unittest.TestCase):
@@ -31,6 +32,11 @@ class SampleMoviesTest(unittest.TestCase):
 
     def test_no_invented_numbers(self):
         self.assertTrue(all(r["popularity"] is None and r["vote_average"] is None for r in self.recs))
+
+    def test_one_page_of_movies_marked_as_demo(self):
+        (page,) = sample_movies.extract(Batch("tmdb", "2026-11-26"))
+        self.assertEqual((page.entity, page.records), ("movies", self.recs))
+        self.assertTrue(sample_movies.params()["demo"])
 
     def test_genre_names_are_tmdb_style(self):
         known = {"Action", "Adventure", "Animation", "Comedy", "Crime", "Drama", "Family", "Fantasy", "History",

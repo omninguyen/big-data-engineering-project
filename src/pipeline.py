@@ -1,17 +1,17 @@
-"""Ingest for Databricks: source API -> landing volume (JSONL), one Python task per source.
+"""Entry point of the Databricks Python tasks.
 
   python pipeline.py [--set KEY=VALUE ...] ingest --source tmdb|musicbrainz [--date YYYY-MM-DD]
 
-ingest     TMDB movies -> <landing>/tmdb/movies/dt=<date>/, MusicBrainz albums -> <landing>/musicbrainz/release_groups/
-           dt=<date>/ (landing: UC_LANDING_ROOT, default /Volumes/<UC_CATALOG>/bronze/landing)
---set      settings of src/common/config.py, applied before it is imported. Serverless job tasks have no cluster
-           environment variables, so the job passes them as parameters, e.g. --set UC_CATALOG=big_data_engineering
+ingest   one batch of a source -> the ADLS container bronze (src/ingest): data files plus a manifest with the batch
+         id, times, counts and status. --date is the logical date (folder dt=), default today (UTC).
+--set    settings of src/common/config.py, applied before it is imported. Serverless job tasks have no cluster
+         environment variables, so the job passes them as parameters, e.g. --set UC_CATALOG=big_data_engineering
+         --set JOB_RUN_ID={{job.run_id}} --set TASK_RUN_ID={{task.run_id}}
 
---date defaults to today (UTC). A non-zero exit fails the task, so Databricks retries it. TMDB without an API key
-(secret tmdb-api-key) is the one expected gap: it is logged and the task succeeds (Databricks has no 'skipped' state).
+A FAILED batch exits non-zero, so Databricks retries the task (as a new batch). PARTIAL (some pages failed) and
+SKIPPED (no TMDB API key) batches succeed; their manifest tells them apart.
 """
 import argparse
-import logging
 import os
 import sys
 from datetime import date, datetime, timezone
@@ -23,8 +23,6 @@ except NameError:
     _SRC = os.getcwd()
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
-
-log = logging.getLogger("pipeline")
 
 
 def _date(value: str) -> str:
@@ -39,41 +37,23 @@ def _setting(value: str):
     return key, val
 
 
-def ingest(args) -> int:
-    from common import config
-    if args.source == "musicbrainz":
-        from batch import musicbrainz
-        return musicbrainz.run(args.date)
-    if config.MOVIE_SOURCE == "file":  # TMDB export uploaded to MOVIE_FILE in the landing volume
-        from batch import tmdb_file
-        return tmdb_file.run(args.date)
-    if config.MOVIE_SOURCE == "sample":  # built-in demo set, no network needed
-        from batch import sample_movies
-        return sample_movies.run(args.date)
-    from batch import tmdb
-    from common.errors import MissingCredentials
-    try:
-        return tmdb.run(args.date)
-    except MissingCredentials as e:
-        from common import storage
-        # An empty file keeps tmdb/movies/ in place: a later read_files of that folder fails when it is missing.
-        # A separate name never overwrites a real delivery of the same day.
-        path = storage.put_bytes(f"bronze/tmdb/movies/dt={args.date}/skipped.jsonl", b"")
-        log.warning("Skipping TMDB ingest: %s (wrote empty %s)", e, path)
-        return 0
+def ingest(args) -> dict:
+    from ingest import runner
+    return runner.run(args.source, args.date)
 
 
 TASKS = {"ingest": ingest}
 
 
 def parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="pipeline.py", description="Ingest for Databricks: source API -> landing volume")
+    from ingest.sources import NAMES
+    p = argparse.ArgumentParser(prog="pipeline.py", description="Databricks Python tasks: ingest")
     p.add_argument("--set", dest="settings", type=_setting, action="append", default=[], metavar="KEY=VALUE",
                    help="environment setting for src/common/config.py, repeatable")
     sub = p.add_subparsers(dest="task", required=True)
-    s = sub.add_parser("ingest", help="source API -> landing volume (bronze JSONL)")
-    s.add_argument("--source", choices=["tmdb", "musicbrainz"], required=True)
-    s.add_argument("--date", type=_date, default="")
+    s = sub.add_parser("ingest", help="one batch of a source -> bronze (JSONL + manifest)")
+    s.add_argument("--source", choices=NAMES, required=True)
+    s.add_argument("--date", type=_date, default="", help="logical date YYYY-MM-DD (default today, UTC)")
     return p
 
 
@@ -81,10 +61,9 @@ def main(argv=None):
     args = parser().parse_args(argv)
     for key, value in args.settings:  # before anything imports common.config
         os.environ[key] = value
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    result = TASKS[args.task](args)
-    log.info("%s finished: %s", args.task, result)
-    return result
+    from common import logs
+    logs.setup()
+    return TASKS[args.task](args)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,6 @@
-"""src/pipeline.py: argument parsing, --set, task dispatch (the task bodies are faked)."""
+"""src/pipeline.py: argument parsing, --set, task dispatch (the batch runner is faked)."""
 import os
 import sys
-import tempfile
-import types
 import unittest
 from unittest import mock
 
@@ -10,12 +8,7 @@ SRC = os.path.join(os.path.dirname(__file__), "..", "src")
 sys.path.insert(0, SRC)
 
 import pipeline  # noqa: E402
-from common import config  # noqa: E402
-from common.errors import MissingCredentials  # noqa: E402
-
-
-def fake_module(**functions):
-    return types.SimpleNamespace(**functions)
+from ingest import runner  # noqa: E402
 
 
 class ParserTest(unittest.TestCase):
@@ -51,32 +44,17 @@ class ParserTest(unittest.TestCase):
 
 
 class IngestTest(unittest.TestCase):
-    def ingest(self, source, movie_source="tmdb", tmdb_run=None):
-        mods = {"batch.tmdb": fake_module(run=tmdb_run or (lambda ds: 5)),
-                "batch.tmdb_file": fake_module(run=lambda ds: 7),
-                "batch.sample_movies": fake_module(run=lambda ds: 74),
-                "batch.musicbrainz": fake_module(run=lambda ds: 9)}
-        import batch
-        with mock.patch.dict(sys.modules, mods), mock.patch.object(config, "MOVIE_SOURCE", movie_source), \
-                mock.patch.multiple(batch, create=True, **{k.split(".")[1]: v for k, v in mods.items()}):
-            return pipeline.main(["ingest", "--source", source, "--date", "2026-11-24"])
+    def test_runs_one_batch_of_the_source(self):
+        for source in ("tmdb", "musicbrainz"):
+            with self.subTest(source=source), \
+                    mock.patch.object(runner, "run", return_value={"status": "SUCCESS"}) as run:
+                self.assertEqual(pipeline.main(["ingest", "--source", source, "--date", "2026-11-24"]),
+                                 {"status": "SUCCESS"})
+            run.assert_called_once_with(source, "2026-11-24")
 
-    def test_sources(self):
-        self.assertEqual(self.ingest("musicbrainz"), 9)
-        self.assertEqual(self.ingest("tmdb"), 5)
-        self.assertEqual(self.ingest("tmdb", movie_source="file"), 7)
-        self.assertEqual(self.ingest("tmdb", movie_source="sample"), 74)
-
-    def test_missing_tmdb_key_succeeds_and_keeps_the_folder_readable(self):
-        def no_key(ds):
-            raise MissingCredentials("TMDB_API_KEY is empty")
-        root = tempfile.mkdtemp()
-        with mock.patch.object(config, "ON_DATABRICKS", True), mock.patch.object(config, "UC_LANDING_ROOT", root), \
-                self.assertLogs("pipeline", "WARNING"):
-            self.assertEqual(self.ingest("tmdb", tmdb_run=no_key), 0)
-        path = os.path.join(root, "tmdb", "movies", "dt=2026-11-24", "skipped.jsonl")
-        self.assertTrue(os.path.isfile(path))
-        self.assertEqual(os.path.getsize(path), 0)
+    def test_a_failed_batch_fails_the_task(self):
+        with mock.patch.object(runner, "run", side_effect=RuntimeError("boom")), self.assertRaises(RuntimeError):
+            pipeline.main(["ingest", "--source", "tmdb"])
 
 
 if __name__ == "__main__":
