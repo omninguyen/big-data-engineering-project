@@ -11,6 +11,7 @@ sys.path.insert(0, SRC)
 
 import pipeline  # noqa: E402
 from common import config  # noqa: E402
+from ingest import batch  # noqa: E402
 from common.errors import MissingCredentials  # noqa: E402
 
 
@@ -52,10 +53,10 @@ class ParserTest(unittest.TestCase):
 
 class IngestTest(unittest.TestCase):
     def ingest(self, source, movie_source="tmdb", tmdb_run=None):
-        mods = {"ingest.tmdb": fake_module(run=tmdb_run or (lambda ds: 5)),
-                "ingest.tmdb_file": fake_module(run=lambda ds: 7),
-                "ingest.sample_movies": fake_module(run=lambda ds: 74),
-                "ingest.musicbrainz": fake_module(run=lambda ds: 9)}
+        mods = {"ingest.tmdb": fake_module(run=tmdb_run or (lambda ds, batch_id: 5)),
+                "ingest.tmdb_file": fake_module(run=lambda ds, batch_id: 7),
+                "ingest.sample_movies": fake_module(run=lambda ds, batch_id: 74),
+                "ingest.musicbrainz": fake_module(run=lambda ds, batch_id: 9)}
         import ingest
         with mock.patch.dict(sys.modules, mods), mock.patch.object(config, "MOVIE_SOURCE", movie_source), \
                 mock.patch.multiple(ingest, create=True, **{k.split(".")[1]: v for k, v in mods.items()}):
@@ -67,14 +68,23 @@ class IngestTest(unittest.TestCase):
         self.assertEqual(self.ingest("tmdb", movie_source="file"), 7)
         self.assertEqual(self.ingest("tmdb", movie_source="sample"), 74)
 
+    def test_every_run_is_a_new_batch(self):
+        seen = []
+        for _ in range(2):
+            self.ingest("tmdb", tmdb_run=lambda ds, batch_id: seen.append((ds, batch_id)))
+        self.assertEqual([ds for ds, _ in seen], ["2026-11-24", "2026-11-24"])
+        self.assertNotEqual(seen[0][1], seen[1][1])
+        for _, batch_id in seen:
+            self.assertRegex(batch_id, r"^\d{8}T\d{6}Z-[0-9a-f]{6}$")
+
     def test_missing_tmdb_key_succeeds_and_keeps_the_folder_readable(self):
-        def no_key(ds):
+        def no_key(ds, batch_id):
             raise MissingCredentials("TMDB_API_KEY is empty")
         root = tempfile.mkdtemp()
         with mock.patch.object(config, "ON_DATABRICKS", True), mock.patch.object(config, "UC_LANDING_ROOT", root), \
-                self.assertLogs("pipeline", "WARNING"):
+                mock.patch.object(batch, "new_batch_id", return_value="B1"), self.assertLogs("pipeline", "WARNING"):
             self.assertEqual(self.ingest("tmdb", tmdb_run=no_key), 0)
-        path = os.path.join(root, "tmdb", "movies", "dt=2026-11-24", "skipped.jsonl")
+        path = os.path.join(root, "tmdb", "movies", "dt=2026-11-24", "batch_id=B1", "skipped.jsonl")
         self.assertTrue(os.path.isfile(path))
         self.assertEqual(os.path.getsize(path), 0)
 

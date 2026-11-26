@@ -2,8 +2,10 @@
 
   python pipeline.py [--set KEY=VALUE ...] ingest --source tmdb|musicbrainz [--date YYYY-MM-DD]
 
-ingest     TMDB movies -> <landing>/tmdb/movies/dt=<date>/, MusicBrainz albums -> <landing>/musicbrainz/release_groups/
-           dt=<date>/ (landing: UC_LANDING_ROOT, default /Volumes/<UC_CATALOG>/bronze/landing)
+ingest     TMDB movies -> <landing>/tmdb/movies/dt=<date>/batch_id=<batch id>/, MusicBrainz albums ->
+           <landing>/musicbrainz/release_groups/dt=<date>/batch_id=<batch id>/
+           (landing: UC_LANDING_ROOT, default /Volumes/<UC_CATALOG>/bronze/landing). Every run is a new batch
+           (src/ingest/batch.py), so a rerun of the same --date never overwrites an earlier one.
 --set      settings of src/common/config.py, applied before it is imported. Serverless job tasks have no cluster
            environment variables, so the job passes them as parameters, e.g. --set UC_CATALOG=big_data_engineering
 
@@ -41,24 +43,26 @@ def _setting(value: str):
 
 def ingest(args) -> int:
     from common import config
+    from ingest.batch import bronze_key, new_batch_id
+    batch_id = new_batch_id()
+    log.info("%s ingest for dt=%s: batch %s", args.source, args.date, batch_id)
     if args.source == "musicbrainz":
         from ingest import musicbrainz
-        return musicbrainz.run(args.date)
+        return musicbrainz.run(args.date, batch_id)
     if config.MOVIE_SOURCE == "file":  # TMDB export uploaded to MOVIE_FILE in the landing volume
         from ingest import tmdb_file
-        return tmdb_file.run(args.date)
+        return tmdb_file.run(args.date, batch_id)
     if config.MOVIE_SOURCE == "sample":  # built-in demo set, no network needed
         from ingest import sample_movies
-        return sample_movies.run(args.date)
+        return sample_movies.run(args.date, batch_id)
     from ingest import tmdb
     from common.errors import MissingCredentials
     try:
-        return tmdb.run(args.date)
+        return tmdb.run(args.date, batch_id)
     except MissingCredentials as e:
         from common import storage
         # An empty file keeps tmdb/movies/ in place: a later read_files of that folder fails when it is missing.
-        # A separate name never overwrites a real delivery of the same day.
-        path = storage.put_bytes(f"bronze/tmdb/movies/dt={args.date}/skipped.jsonl", b"")
+        path = storage.put_bytes(bronze_key("tmdb", "movies", args.date, batch_id, "skipped.jsonl"), b"")
         log.warning("Skipping TMDB ingest: %s (wrote empty %s)", e, path)
         return 0
 
