@@ -13,8 +13,8 @@ bronze     creates the bronze tables if missing (src/sql/bronze/): external Delt
            landing/ (BRONZE_ROOT), then loads the new files of landing/ into them with COPY INTO
            (src/sql/bronze/load/). Runs after the ingest tasks.
 silver     creates the silver tables if missing (src/sql/silver/): external Delta tables in the container silver
-           (SILVER_ROOT), then loads every new bronze batch into them, oldest first (src/sql/silver/load/).
-           Runs after bronze.
+           (SILVER_ROOT), then loads every new bronze batch into the incremental ones, oldest first, and rebuilds
+           the full-load ones (src/sql/silver/load/). Runs after bronze.
 --set      settings of src/common/config.py, applied before it is imported. Serverless job tasks have no cluster
            environment variables, so the job passes them as parameters, e.g.
            --set BRONZE_ROOT=abfss://bronze@<account>.dfs.core.windows.net/landing
