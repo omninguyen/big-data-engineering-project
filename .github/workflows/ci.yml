@@ -1,5 +1,6 @@
-# Unit tests of the ingest code. Runs when a merged pull request changes src/ (a push to main), or by hand:
-# Actions -> ci -> Run workflow. cd.yml also calls it before deploying. Dev branches and pull requests run nothing.
+# Unit tests of the ingest code and the bundle. Runs when a merged pull request changes src/ or databricks.yml
+# (a push to main), or by hand: Actions -> ci -> Run workflow. cd.yml also calls it before deploying.
+# Dev branches and pull requests run nothing.
 name: ci
 
 on:
@@ -7,6 +8,7 @@ on:
     branches: [main]
     paths:
       - "src/**"
+      - "databricks.yml"
   workflow_dispatch:
   workflow_call:  # from cd.yml
 
@@ -30,7 +32,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
-        run: pip install "requests>=2.31,<3"
+        run: pip install "requests>=2.31,<3" "pyyaml>=6,<7"
       - name: Compile
         run: python -m compileall -q src
       - name: Unit tests
