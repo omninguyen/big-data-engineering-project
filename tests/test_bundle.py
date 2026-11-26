@@ -56,6 +56,7 @@ class BundleTest(unittest.TestCase):
         self.assertEqual(args.task, "tables")
         self.assertEqual(dict(args.settings), {"BRONZE_ROOT": "${var.bronze_root}"})  # tables/ goes next to it
         self.assertEqual({d["task_key"] for d in task["depends_on"]}, {"ingest_tmdb", "ingest_musicbrainz"})
+        self.assertEqual(task["run_if"], "ALL_DONE")  # one failed source does not hold back the other
         self.assertIn(task["environment_key"], environments)
 
     def test_daily_at_two_vietnam_time_paused_unless_switched_on(self):
