@@ -14,8 +14,8 @@ tables     creates the bronze tables if missing (src/sql/bronze/): external Delt
            environment variables, so the job passes them as parameters, e.g.
            --set BRONZE_ROOT=abfss://bronze@<account>.dfs.core.windows.net/landing
 
---date defaults to today in Vietnam time (UTC+7, the timezone of the job's schedule), so the 02:00 run on
-27/11 writes dt=2026-11-27. The batch id stays in UTC (its Z suffix).
+--date defaults to today in Vietnam time (UTC+7, the timezone of the job's schedule), as the batch id
+(src/ingest/batch.py): the 02:00 run on 27/11 writes dt=2026-11-27/batch_id=20261127T020005-<6 hex>.
 A non-zero exit fails the task, so Databricks retries it. TMDB without an API key
 (secret tmdb-api-key) is the one expected gap: it is logged and the task succeeds (Databricks has no 'skipped' state).
 """
@@ -23,7 +23,7 @@ import argparse
 import logging
 import os
 import sys
-from datetime import date, datetime, timedelta, timezone
+from datetime import date
 
 # Databricks script tasks may not define __file__; their working directory is this file's folder (DBR 14+).
 try:
@@ -34,13 +34,12 @@ if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
 log = logging.getLogger("pipeline")
-# Asia/Ho_Chi_Minh (no daylight saving time), as timezone_id of the schedule in databricks.yml
-VIETNAM = timezone(timedelta(hours=7), "Asia/Ho_Chi_Minh")
 
 
 def _date(value: str) -> str:
     """YYYY-MM-DD (it ends up in a folder name), or today in Vietnam time when empty."""
-    return date.fromisoformat(value).isoformat() if value else datetime.now(VIETNAM).date().isoformat()
+    from ingest.batch import today
+    return date.fromisoformat(value).isoformat() if value else today()
 
 
 def _setting(value: str):
