@@ -7,6 +7,7 @@
 #   DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET   OAuth secret of the deploying service principal
 #   BRONZE_ROOT                                       raw files, abfss://bronze@<account>.dfs.core.windows.net/landing
 #   SILVER_ROOT                                       silver tables, abfss://silver@<account>.dfs.core.windows.net
+#   GOLD_ROOT                                         gold tables, abfss://gold@<account>.dfs.core.windows.net
 # Variable (optional): INGEST_SCHEDULE = UNPAUSED switches the daily schedule on. Default PAUSED.
 name: cd
 
@@ -42,6 +43,7 @@ jobs:
       DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
       BUNDLE_VAR_bronze_root: ${{ secrets.BRONZE_ROOT }}
       BUNDLE_VAR_silver_root: ${{ secrets.SILVER_ROOT }}
+      BUNDLE_VAR_gold_root: ${{ secrets.GOLD_ROOT }}
       BUNDLE_VAR_schedule_status: ${{ vars.INGEST_SCHEDULE || 'PAUSED' }}
     steps:
       - uses: actions/checkout@v4
@@ -67,6 +69,11 @@ jobs:
           case "$BUNDLE_VAR_silver_root" in
             abfss://*) ;;
             *) echo "::error::Secret SILVER_ROOT is missing or does not start with abfss://."
+               exit 1 ;;
+          esac
+          case "$BUNDLE_VAR_gold_root" in
+            abfss://*) ;;
+            *) echo "::error::Secret GOLD_ROOT is missing or does not start with abfss://."
                exit 1 ;;
           esac
           case "$BUNDLE_VAR_schedule_status" in

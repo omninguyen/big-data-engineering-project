@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.join(ROOT, "src"))
 import pipeline  # noqa: E402
 import sql  # noqa: E402
 
-# The job graph: task -> the tasks it waits for. Each path follows the data, source -> bronze -> silver.
+# The job graph: task -> the tasks it waits for. Each path follows the data, source -> bronze -> silver -> gold.
 DAG = {
     "setup_tables": set(),
     "ingest_tmdb": set(),
@@ -28,6 +28,8 @@ DAG = {
     "ingest_listenbrainz": {"silver_release_group"},  # looks up the albums known to silver
     "bronze_listenbrainz_release_group_popularity": {"ingest_listenbrainz", "setup_tables"},
     "silver_release_group_metric_daily": {"bronze_listenbrainz_release_group_popularity"},
+    "gold_dim_date": {"setup_tables"},  # the calendar needs no source
+    "gold_dim_media": {"silver_movie_genre", "silver_release_group_genre"},  # after movie, release_group, genre
 }
 
 try:
@@ -72,20 +74,21 @@ class BundleTest(unittest.TestCase):
         loads = {}
         for key, task in tasks.items():
             args = pipeline.parser().parse_args(task["spark_python_task"]["parameters"])
-            if args.task in ("bronze", "silver"):
+            if args.task in ("bronze", "silver", "gold"):
                 self.assertEqual(key, f"{args.task}_{args.table}")
                 self.assertEqual(dict(args.settings), {"BRONZE_ROOT": "${var.bronze_root}"} if args.task == "bronze"
-                                 else {})  # silver reads and writes Unity Catalog tables only
+                                 else {})  # silver and gold read and write Unity Catalog tables only
                 loads.setdefault(args.task, []).append(args.table)
         self.assertEqual(sorted(loads["bronze"]), sorted(sql.BRONZE_TABLES))
         self.assertEqual(sorted(loads["silver"]), sorted(sql.SILVER_LOADED))
+        self.assertEqual(sorted(loads["gold"]), sorted(sql.GOLD_TABLES))
 
     def test_setup_creates_the_tables_first(self):
         tasks, _ = self.tasks_and_environments()
         args = pipeline.parser().parse_args(tasks["setup_tables"]["spark_python_task"]["parameters"])
         self.assertEqual(args.task, "setup")
-        self.assertEqual(dict(args.settings),
-                         {"BRONZE_ROOT": "${var.bronze_root}", "SILVER_ROOT": "${var.silver_root}"})
+        self.assertEqual(dict(args.settings), {"BRONZE_ROOT": "${var.bronze_root}", "SILVER_ROOT": "${var.silver_root}",
+                                               "GOLD_ROOT": "${var.gold_root}"})
 
     def test_one_ingest_task_per_source(self):
         tasks, _ = self.tasks_and_environments()
@@ -110,7 +113,7 @@ class BundleTest(unittest.TestCase):
         text = re.sub(r"abfss://\w+@<account>\.dfs\.core\.windows\.net", "", self.text)  # placeholders in descriptions
         for literal in ("abfss://", "azuredatabricks.net", "dfs.core.windows.net"):
             self.assertNotIn(literal, text)
-        for variable in ("bronze_root", "silver_root"):  # must come from the secrets
+        for variable in ("bronze_root", "silver_root", "gold_root"):  # must come from the secrets
             self.assertNotIn("default", self.bundle["variables"][variable])
 
 
