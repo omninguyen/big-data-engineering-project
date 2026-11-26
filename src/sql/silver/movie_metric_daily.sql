@@ -1,5 +1,5 @@
 -- Silver table of daily TMDB metrics: one row per movie and snapshot date.
--- Created if missing by: pipeline.py silver. Loaded batch by batch from bronze.tmdb_movies
+-- Created if missing by: pipeline.py setup. Loaded batch by batch from bronze.tmdb_movies
 -- (silver/load/movie_metric_daily.sql).
 CREATE TABLE IF NOT EXISTS ${catalog}.silver.movie_metric_daily (
   movie_id       BIGINT     NOT NULL COMMENT 'TMDB id',

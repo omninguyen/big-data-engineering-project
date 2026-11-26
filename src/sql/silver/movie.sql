@@ -1,5 +1,5 @@
 -- Silver table of TMDB movies, SCD Type 2: one row per version of a movie's descriptive columns.
--- Created if missing by: pipeline.py silver. Loaded batch by batch from bronze.tmdb_movies (silver/load/movie.sql).
+-- Created if missing by: pipeline.py setup. Loaded batch by batch from bronze.tmdb_movies (silver/load/movie.sql).
 CREATE TABLE IF NOT EXISTS ${catalog}.silver.movie (
   movie_id           BIGINT     NOT NULL COMMENT 'TMDB id',
   title              STRING,

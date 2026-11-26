@@ -1,5 +1,5 @@
 -- Silver table of MusicBrainz artists, SCD Type 2: one row per version of an artist's name.
--- Created if missing by: pipeline.py silver. Loaded batch by batch from the artist credits of
+-- Created if missing by: pipeline.py setup. Loaded batch by batch from the artist credits of
 -- bronze.musicbrainz_release_groups (silver/load/artist.sql).
 CREATE TABLE IF NOT EXISTS ${catalog}.silver.artist (
   artist_id   STRING     NOT NULL COMMENT 'MusicBrainz artist id (UUID)',

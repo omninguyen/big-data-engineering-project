@@ -1,5 +1,5 @@
 -- Silver table of MusicBrainz release groups (albums), SCD Type 2: one row per version of an album's descriptive
--- columns. Created if missing by: pipeline.py silver. Loaded batch by batch from bronze.musicbrainz_release_groups
+-- columns. Created if missing by: pipeline.py setup. Loaded batch by batch from bronze.musicbrainz_release_groups
 -- (silver/load/release_group.sql).
 CREATE TABLE IF NOT EXISTS ${catalog}.silver.release_group (
   release_group_id    STRING         NOT NULL COMMENT 'MusicBrainz release group id (UUID)',
