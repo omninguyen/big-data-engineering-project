@@ -1,11 +1,15 @@
-"""Ingest for Databricks: source API -> landing/ of the ADLS container bronze (JSONL), one Python task per source.
+"""Ingest for Databricks: source API -> landing/ of the ADLS container bronze (JSONL), one Python task per source,
+then the bronze tables in Unity Catalog.
 
   python pipeline.py [--set KEY=VALUE ...] ingest --source tmdb|musicbrainz [--date YYYY-MM-DD]
+  python pipeline.py [--set KEY=VALUE ...] tables
 
 ingest     TMDB movies -> <bronze>/tmdb/movies/dt=<date>/batch_id=<batch id>/, MusicBrainz albums ->
            <bronze>/musicbrainz/release_groups/dt=<date>/batch_id=<batch id>/
            (bronze: BRONZE_ROOT, e.g. abfss://bronze@<account>.dfs.core.windows.net/landing). Every run is a new batch
            (src/ingest/batch.py), so a rerun of the same --date never overwrites an earlier one.
+tables     creates the bronze tables if missing (src/sql/bronze/): external Delta tables in tables/, next to
+           landing/ (BRONZE_ROOT). Runs after the ingest tasks.
 --set      settings of src/common/config.py, applied before it is imported. Serverless job tasks have no cluster
            environment variables, so the job passes them as parameters, e.g.
            --set BRONZE_ROOT=abfss://bronze@<account>.dfs.core.windows.net/landing
@@ -68,7 +72,13 @@ def ingest(args) -> int:
         return 0
 
 
-TASKS = {"ingest": ingest}
+def tables(args) -> list:
+    import sql
+    from pyspark.sql import SparkSession  # preinstalled on Databricks
+    return sql.create_bronze_tables(SparkSession.builder.getOrCreate())
+
+
+TASKS = {"ingest": ingest, "tables": tables}
 
 
 def parser() -> argparse.ArgumentParser:
@@ -79,6 +89,7 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser("ingest", help="source API -> landing/ of the ADLS container bronze (JSONL)")
     s.add_argument("--source", choices=["tmdb", "musicbrainz"], required=True)
     s.add_argument("--date", type=_date, default="")
+    sub.add_parser("tables", help="create the bronze tables in Unity Catalog if missing (src/sql/bronze/)")
     return p
 
 

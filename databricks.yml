@@ -41,7 +41,7 @@ resources:
             environment_version: "3"   # serverless, Python 3.12
             dependencies:
               - requests>=2.31,<3
-      tasks:   # independent sources: the two tasks run in parallel
+      tasks:   # independent sources: the two ingest tasks run in parallel, then bronze_tables
         - task_key: ingest_tmdb
           environment_key: default
           max_retries: 2
@@ -58,3 +58,14 @@ resources:
           spark_python_task:
             python_file: ./src/pipeline.py
             parameters: ["--set", "BRONZE_ROOT=${var.bronze_root}", "ingest", "--source", "musicbrainz"]
+        - task_key: bronze_tables   # creates the bronze tables in Unity Catalog if missing (src/sql/bronze/)
+          depends_on:
+            - task_key: ingest_tmdb
+            - task_key: ingest_musicbrainz
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 900
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["--set", "BRONZE_ROOT=${var.bronze_root}", "tables"]
