@@ -1,15 +1,18 @@
-"""Batch ingest: TMDB movies -> <BRONZE_ROOT>/tmdb/movies/dt=<ds>/batch_id=<batch id>/movies.jsonl
+"""Batch ingest: TMDB movies -> <BRONZE_ROOT>/tmdb/movies/dt=<ds>/batch_id=<batch id>/movies.jsonl, and the rank
+of today's trending movies -> <BRONZE_ROOT>/tmdb/trending_movies/dt=<ds>/batch_id=<batch id>/trending_movies.jsonl
 
 No API key -> MissingCredentials (the task is skipped). HTTP errors or an empty result -> SourceError, so the task
 fails and Databricks retries it. Errors never include the request URL, which carries the API key.
 
-Endpoints: movie/popular and movie/top_rated (TMDB_PAGES pages each), and the new movies of movie/now_playing (in
-cinemas) and movie/upcoming (TMDB_NEW_PAGES pages each). Paging stops early at the last page of an endpoint.
+Endpoints: movie/popular and movie/top_rated (TMDB_PAGES pages each), the new movies of movie/now_playing (in
+cinemas) and movie/upcoming (TMDB_NEW_PAGES pages each), and trending/movie/day (TMDB_TRENDING_PAGES pages): its
+movies go to movies.jsonl like the others, and their rank, in TMDB's order, to trending_movies.jsonl. Paging stops
+early at the last page of an endpoint.
 
 Rate limit: requests are sent one at a time on one connection, with a pause of PAUSE_S after each, so at most
 4 requests/s: about 10x under TMDB's ceiling (around 40-50 requests/s per IP) and within its old limit of 40 per
 10 s. A 429 is retried after its Retry-After (common/http.py). A run makes at most
-1 + 2 x TMDB_PAGES + 2 x TMDB_NEW_PAGES requests (51).
+1 + 2 x TMDB_PAGES + 2 x TMDB_NEW_PAGES + TMDB_TRENDING_PAGES requests (52).
 """
 import logging
 import time
@@ -23,8 +26,9 @@ from common.http import session
 from ingest.batch import bronze_key
 
 log = logging.getLogger(__name__)
-ENDPOINTS = ["movie/popular", "movie/top_rated", "movie/now_playing", "movie/upcoming"]
+ENDPOINTS = ["movie/popular", "movie/top_rated", "movie/now_playing", "movie/upcoming", "trending/movie/day"]
 NEW_MOVIES = {"movie/now_playing", "movie/upcoming"}  # paged with TMDB_NEW_PAGES
+TRENDING = "trending/movie/day"  # paged with TMDB_TRENDING_PAGES; its movies are also ranked
 PAUSE_S = 0.25  # after every request: at most 4 requests/s
 
 
@@ -49,6 +53,12 @@ def _get(sess, path: str, params: dict):
         time.sleep(PAUSE_S)  # also after a failed request
 
 
+def _pages(ep: str) -> int:
+    if ep == TRENDING:
+        return config.TMDB_TRENDING_PAGES
+    return config.TMDB_NEW_PAGES if ep in NEW_MOVIES else config.TMDB_PAGES
+
+
 def run(ds: str, batch_id: str) -> int:
     sess = session("MediaPlatformThesis/1.0", proxy=config.TMDB_PROXY)
     auth = _auth(sess)
@@ -57,9 +67,9 @@ def run(ds: str, batch_id: str) -> int:
         raise SourceError("tmdb", f"GET genre/movie/list -> HTTP {r.status_code}", status=r.status_code)
     genres = {g["id"]: g["name"] for g in r.json().get("genres", [])}
     now = datetime.now(timezone.utc).isoformat()
-    records = []
+    records, ranks = [], {}  # ranks: TMDB id -> rank in trending/movie/day, 1 = first
     for ep in ENDPOINTS:
-        pages = config.TMDB_NEW_PAGES if ep in NEW_MOVIES else config.TMDB_PAGES
+        pages = _pages(ep)
         for page in range(1, pages + 1):
             r = _get(sess, ep, {**auth, "page": page, "language": "en-US"})
             if r.status_code != 200:
@@ -74,6 +84,8 @@ def run(ds: str, batch_id: str) -> int:
                 m["_endpoint"] = ep
                 m["_ingested_at"] = now
                 records.append(m)
+                if ep == TRENDING and m.get("id") is not None:  # a movie repeated on a later page keeps its rank
+                    ranks.setdefault(m["id"], len(ranks) + 1)
             if page >= payload.get("total_pages", pages):  # the last page of this endpoint
                 break
     if not records:
@@ -81,4 +93,9 @@ def run(ds: str, batch_id: str) -> int:
     key = bronze_key("tmdb", "movies", ds, batch_id, "movies.jsonl")
     n = storage.put_jsonl(key, records)
     log.info("TMDB: wrote %s records to %s", n, storage.bronze_path(key))
+    if not ranks:  # the file is still written, empty: COPY INTO of a missing folder fails
+        log.warning("TMDB: no movies from %s", TRENDING)
+    trending = [{"id": i, "rank": r, "_ingested_at": now} for i, r in ranks.items()]
+    key = bronze_key("tmdb", "trending_movies", ds, batch_id, "trending_movies.jsonl")
+    log.info("TMDB: wrote %s trending ranks to %s", storage.put_jsonl(key, trending), storage.bronze_path(key))
     return n

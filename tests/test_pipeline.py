@@ -125,8 +125,14 @@ class IngestTest(unittest.TestCase):
         self.assertEqual(self.ingest("musicbrainz"), 9)
         self.assertEqual(self.ingest("wikipedia"), 11)
         self.assertEqual(self.ingest("tmdb"), 5)
-        self.assertEqual(self.ingest("tmdb", movie_source="file"), 7)
-        self.assertEqual(self.ingest("tmdb", movie_source="sample"), 74)
+        root = tempfile.mkdtemp()
+        with mock.patch.object(config, "ON_DATABRICKS", True), mock.patch.object(config, "BRONZE_ROOT", root), \
+                mock.patch.object(batch, "new_batch_id", return_value="B1"), self.assertLogs("pipeline", "WARNING"):
+            self.assertEqual(self.ingest("tmdb", movie_source="file"), 7)
+            self.assertEqual(self.ingest("tmdb", movie_source="sample"), 74)
+        # no trending without the API: an empty file keeps the folder readable for COPY INTO
+        path = os.path.join(root, "tmdb", "trending_movies", "dt=2026-11-24", "batch_id=B1", "skipped.jsonl")
+        self.assertEqual(os.path.getsize(path), 0)
 
     def test_every_run_is_a_new_batch(self):
         seen = []
@@ -156,9 +162,10 @@ class IngestTest(unittest.TestCase):
         with mock.patch.object(config, "ON_DATABRICKS", True), mock.patch.object(config, "BRONZE_ROOT", root), \
                 mock.patch.object(batch, "new_batch_id", return_value="B1"), self.assertLogs("pipeline", "WARNING"):
             self.assertEqual(self.ingest("tmdb", tmdb_run=no_key), 0)
-        path = os.path.join(root, "tmdb", "movies", "dt=2026-11-24", "batch_id=B1", "skipped.jsonl")
-        self.assertTrue(os.path.isfile(path))
-        self.assertEqual(os.path.getsize(path), 0)
+        for folder in ("movies", "trending_movies"):
+            path = os.path.join(root, "tmdb", folder, "dt=2026-11-24", "batch_id=B1", "skipped.jsonl")
+            self.assertTrue(os.path.isfile(path))
+            self.assertEqual(os.path.getsize(path), 0)
 
 
 if __name__ == "__main__":

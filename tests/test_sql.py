@@ -17,7 +17,8 @@ SILVER = "abfss://silver@acct.dfs.core.windows.net"
 GOLD = "abfss://gold@acct.dfs.core.windows.net"
 OPS = f"{GOLD}/ops"
 ROOTS = {"bronze": ROOT, "silver": SILVER, "gold": GOLD, "ops": OPS}
-SOURCES = {"tmdb_movies": "tmdb/movies", "musicbrainz_release_groups": "musicbrainz/release_groups",
+SOURCES = {"tmdb_movies": "tmdb/movies", "tmdb_trending_movies": "tmdb/trending_movies",
+           "musicbrainz_release_groups": "musicbrainz/release_groups",
            "listenbrainz_release_group_popularity": "listenbrainz/release_group_popularity",
            "wikidata_media_articles": "wikidata/media_articles", "wikipedia_pageviews": "wikipedia/pageviews"}
 
@@ -233,6 +234,9 @@ class SilverStatementTest(unittest.TestCase):
         self.assertEqual(columns("wiki_pageview_daily", "silver"),
                          ["article", "view_date", "views", "batch_id", "_loaded_at"])
         self.assertIn("PRIMARY KEY (article, view_date)", create("silver", "wiki_pageview_daily"))
+        self.assertEqual(columns("movie_trending_daily", "silver"),
+                         ["movie_id", "snapshot_date", "rank", "batch_id", "_loaded_at"])
+        self.assertIn("PRIMARY KEY (movie_id, snapshot_date)", create("silver", "movie_trending_daily"))
 
     def test_full_loads(self):
         for name in sql.SILVER_FULL:
@@ -323,6 +327,15 @@ class SilverStatementTest(unittest.TestCase):
         self.assertIn("GROUP BY media_type, source_id", mapping)  # one article per movie or album
         self.assertIn("min_by(url, article)", mapping)
 
+    def test_trending_load(self):
+        steps = sql.statements(sql.render("silver/load", "movie_trending_daily", catalog="cat", batch_id="B1"))
+        self.assertEqual(len(steps), 1)
+        self.assertIn("FROM cat.bronze.tmdb_trending_movies", steps[0])
+        self.assertIn("WHERE batch_id = 'B1'", steps[0])
+        self.assertIn("min(rank)               AS rank", steps[0])  # a movie repeated on two pages keeps its best
+        self.assertIn("WHEN MATCHED AND s.batch_id > t.batch_id THEN UPDATE", steps[0])  # a later batch of the day
+        self.assertEqual(column_list(steps[0]), columns("movie_trending_daily", "silver"))
+
     def test_metric_load_and_the_load_log(self):
         steps = sql.statements(sql.render("silver/load", "movie_metric_daily", catalog="cat", batch_id="B1"))
         self.assertEqual(len(steps), 1)
@@ -349,6 +362,7 @@ class SilverTest(unittest.TestCase):
             "cat.silver.release_group": {"batches": 0}, "cat.silver.artist": {"batches": 0},
             "cat.silver.release_group_metric_daily": {"batches": 0},
             "cat.silver.media_wiki_page": {"batches": 0}, "cat.silver.wiki_pageview_daily": {"batches": 0},
+            "cat.silver.movie_trending_daily": {"batches": 0},
             "cat.silver.genre": {"rows": 2}, "cat.silver.movie_genre": {"rows": 2},
             "cat.silver.release_group_genre": {"rows": 2}, "cat.silver.release_group_artist": {"rows": 2}})
         logged = [s for s in spark.statements if "INSERT INTO cat.silver.load_log" in s]
@@ -448,6 +462,13 @@ class GoldStatementTest(unittest.TestCase):
         self.assertIn("FOREIGN KEY (media_key) REFERENCES cat.gold.dim_media", views)
         for table in ("dim_date", "dim_media", "dim_wiki_page"):  # its load reads dim_wiki_page
             self.assertLess(sql.GOLD_TABLES.index(table), sql.GOLD_TABLES.index("fact_wiki_pageview_daily"))
+        trending = create("gold", "fact_media_trending_daily")
+        self.assertEqual(columns("fact_media_trending_daily", "gold"), ["date_key", "media_key", "rank"])
+        self.assertIn("PRIMARY KEY (date_key, media_key)", trending)
+        self.assertIn("FOREIGN KEY (date_key) REFERENCES cat.gold.dim_date", trending)
+        self.assertIn("FOREIGN KEY (media_key) REFERENCES cat.gold.dim_media", trending)
+        for dim in ("dim_date", "dim_media"):
+            self.assertLess(sql.GOLD_TABLES.index(dim), sql.GOLD_TABLES.index("fact_media_trending_daily"))
 
     def test_full_loads(self):
         for name in sql.GOLD_TABLES:
@@ -525,6 +546,18 @@ class GoldStatementTest(unittest.TestCase):
         self.assertIn("CAST(date_format(v.view_date, 'yyyyMMdd') AS INT)  AS date_key", views)
 
 
+    def test_trending_fact(self):
+        text = sql.render("gold/load", "fact_media_trending_daily", catalog="cat")
+        self.assertIn("FROM cat.silver.movie_trending_daily", text)
+        # the same keys as gold.dim_media and gold.dim_date
+        self.assertIn("concat('movie:', CAST(movie_id AS STRING))           AS media_key", text)
+        self.assertIn("CAST(date_format(snapshot_date, 'yyyyMMdd') AS INT)  AS date_key", text)
+        # a day keeps the ranking of its latest batch only
+        self.assertIn("max(batch_id) OVER (PARTITION BY snapshot_date)      AS day_batch_id", text)
+        self.assertIn("WHERE batch_id = day_batch_id", text)
+        self.assertIn("AND media_key IN (SELECT media_key FROM cat.gold.dim_media)", text)  # every row has its dim
+
+
 class GoldTest(unittest.TestCase):
     def run_gold(self, spark, root=GOLD):
         with mock.patch.object(config, "GOLD_ROOT", root), mock.patch.object(config, "UC_CATALOG", "cat"):
@@ -550,6 +583,8 @@ class OpsStatementTest(unittest.TestCase):
     # bronze table -> (main silver table, the filter of its silver load)
     FILTERS = {
         "tmdb_movies": ("movie", "try_cast(id AS BIGINT) IS NOT NULL"),
+        "tmdb_trending_movies": (
+            "movie_trending_daily", "try_cast(id AS BIGINT) IS NOT NULL AND rank IS NOT NULL AND dt IS NOT NULL"),
         "musicbrainz_release_groups": ("release_group", "id <> ''"),
         "listenbrainz_release_group_popularity": (
             "release_group_metric_daily",
@@ -673,6 +708,8 @@ class MartsStatementTest(unittest.TestCase):
                            "views_prev_7d", "views_change_pct", "popularity", "listen_count", "window_end"],
         "daily_wiki_views": ["date", "media_type", "items", "views"],
         "wiki_coverage": ["media_type", "items", "items_with_article", "coverage_pct"],
+        "tmdb_trending_today": ["rank", "rank_previous_day", "title", "primary_genre", "release_date", "popularity",
+                                "days_trending_30d", "first_trending_date", "snapshot_date"],
         "freshness": ["dataset", "last_batch_id", "last_dt", "last_ingested_at", "hours_since_ingest",
                       "last_silver_loaded_at", "silver_lag_s", "status"],
         "latest_quality_checks": ["dataset", "batch_id", "dt", "check_name", "severity", "value", "op", "threshold",
@@ -739,6 +776,15 @@ class MartsStatementTest(unittest.TestCase):
         self.assertIn("FROM cat.gold.dim_media AS m", coverage)  # every media, with an article or not
         self.assertIn("LEFT JOIN cat.gold.dim_wiki_page AS p ON p.media_key = m.media_key", coverage)
         self.assertIn("try_divide(count(p.media_key), count(*))", coverage)
+
+    def test_tmdb_trending_today(self):
+        text = view("tmdb_trending_today")
+        self.assertIn("max(d.date) OVER () AS latest_date", text)
+        self.assertIn("WHERE t.date = t.latest_date", text)  # the latest trending day only
+        self.assertIn("LEFT JOIN trending AS p ON p.media_key = t.media_key AND p.date = date_sub(t.latest_date, 1)",
+                      text)  # NULL when the movie was not trending the day before
+        self.assertIn("count_if(date > date_sub(latest_date, 30))  AS days_trending_30d", text)
+        self.assertIn("f.media_key = t.media_key AND f.date_key = t.date_key", text)  # popularity of the same day
 
     def test_operations_views(self):
         for name in ("freshness", "latest_quality_checks"):  # batch ids start with their time: greatest = latest

@@ -24,24 +24,26 @@ from string import Template
 
 log = logging.getLogger(__name__)
 HERE = os.path.dirname(os.path.abspath(__file__))
-BRONZE_TABLES = ["tmdb_movies", "musicbrainz_release_groups", "listenbrainz_release_group_popularity",
-                 "wikidata_media_articles", "wikipedia_pageviews"]
+BRONZE_TABLES = ["tmdb_movies", "tmdb_trending_movies", "musicbrainz_release_groups",
+                 "listenbrainz_release_group_popularity", "wikidata_media_articles", "wikipedia_pageviews"]
 SILVER_TABLES = ["load_log", "movie", "movie_metric_daily", "release_group", "artist", "release_group_metric_daily",
                  "genre", "movie_genre", "release_group_genre", "release_group_artist",  # genre before its foreign keys
-                 "media_wiki_page", "wiki_pageview_daily"]
+                 "media_wiki_page", "wiki_pageview_daily", "movie_trending_daily"]
 SILVER_INCREMENTAL = {  # silver table: its bronze table
     "movie": "tmdb_movies", "movie_metric_daily": "tmdb_movies",
     "release_group": "musicbrainz_release_groups", "artist": "musicbrainz_release_groups",
     "release_group_metric_daily": "listenbrainz_release_group_popularity",
-    "media_wiki_page": "wikidata_media_articles", "wiki_pageview_daily": "wikipedia_pageviews"}
+    "media_wiki_page": "wikidata_media_articles", "wiki_pageview_daily": "wikipedia_pageviews",
+    "movie_trending_daily": "tmdb_trending_movies"}
 SILVER_FULL = ["genre", "movie_genre", "release_group_genre", "release_group_artist"]
 SILVER_LOADED = [*SILVER_INCREMENTAL, *SILVER_FULL]  # every silver table with a load (load_log is written by them)
 GOLD_TABLES = ["dim_date", "dim_media", "dim_genre", "bridge_media_genre",  # full loads; dims before their foreign keys
-               "fact_media_metric_daily", "fact_media_change", "dim_wiki_page", "fact_wiki_pageview_daily"]
+               "fact_media_metric_daily", "fact_media_change", "dim_wiki_page", "fact_wiki_pageview_daily",
+               "fact_media_trending_daily"]
 OPS_TABLES = ["pipeline_record_metrics", "data_quality_results"]  # full loads; data_quality_results reads the first
 MARTS_VIEWS = ["catalog_items", "items_per_genre", "items_per_release_year", "movies_by_language", "top_titles",
                "daily_listens", "trending_7d", "new_releases", "catalog_changes",
-               "wiki_attention", "daily_wiki_views", "wiki_coverage",  # content, over gold
+               "wiki_attention", "daily_wiki_views", "wiki_coverage", "tmdb_trending_today",  # content, over gold
                "freshness", "latest_quality_checks", "quality_history", "data_catalog"]  # operations, over ops
 BATCH_ID = re.compile(r"[0-9A-Za-z-]+")
 

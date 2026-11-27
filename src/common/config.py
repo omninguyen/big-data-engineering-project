@@ -59,6 +59,7 @@ if MOVIE_SOURCE not in ("tmdb", "file", "sample"):
 MOVIE_FILE = _get("MOVIE_FILE") or (f"{BRONZE_ROOT}/manual/tmdb_movies.json" if BRONZE_ROOT else "")
 TMDB_PAGES = int(_get("TMDB_PAGES", "20"))  # pages of movie/popular and movie/top_rated (20 movies each)
 TMDB_NEW_PAGES = int(_get("TMDB_NEW_PAGES", "5"))  # pages of movie/now_playing and movie/upcoming: new movies
+TMDB_TRENDING_PAGES = int(_get("TMDB_TRENDING_PAGES", "1"))  # pages of trending/movie/day: the top 20 of today
 # Contact (an email or URL) in the User-Agent, required by MusicBrainz and Wikimedia: secret mb-contact.
 MB_CONTACT = _secret("MB_CONTACT", "mb-contact")
 MB_GENRES = [g.strip() for g in _get(

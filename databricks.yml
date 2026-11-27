@@ -113,6 +113,17 @@ resources:
           spark_python_task:
             python_file: ./src/pipeline.py
             parameters: ["--set", "BRONZE_ROOT=${var.bronze_root}", "bronze", "--table", "tmdb_movies"]
+        - task_key: bronze_tmdb_trending_movies   # COPY INTO from landing/: rank of the trending movies
+          depends_on:
+            - task_key: ingest_tmdb
+            - task_key: setup_tables
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 900
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["--set", "BRONZE_ROOT=${var.bronze_root}", "bronze", "--table", "tmdb_trending_movies"]
         - task_key: bronze_musicbrainz_release_groups
           depends_on:
             - task_key: ingest_musicbrainz
@@ -218,6 +229,16 @@ resources:
           spark_python_task:
             python_file: ./src/pipeline.py
             parameters: ["silver", "--table", "media_wiki_page"]
+        - task_key: silver_movie_trending_daily   # incremental: daily rank of the movies in TMDB trending
+          depends_on:
+            - task_key: bronze_tmdb_trending_movies
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 1800
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["silver", "--table", "movie_trending_daily"]
         - task_key: silver_wiki_pageview_daily   # incremental: daily Wikipedia pageviews per article
           depends_on:
             - task_key: bronze_wikipedia_pageviews
@@ -359,9 +380,21 @@ resources:
           spark_python_task:
             python_file: ./src/pipeline.py
             parameters: ["gold", "--table", "fact_wiki_pageview_daily"]
+        - task_key: gold_fact_media_trending_daily   # full load: daily rank of the movies in TMDB trending
+          depends_on:
+            - task_key: silver_movie_trending_daily
+            - task_key: gold_dim_media
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 900
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["gold", "--table", "fact_media_trending_daily"]
         - task_key: ops_pipeline_record_metrics   # full load: rows, files and lag of every ingest batch
           depends_on:
             - task_key: silver_movie                        # TMDB
+            - task_key: silver_movie_trending_daily
             - task_key: silver_release_group_metric_daily   # runs after silver_release_group (MusicBrainz)
             - task_key: silver_media_wiki_page              # Wikipedia
             - task_key: silver_wiki_pageview_daily
