@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS ${catalog}.bronze.tmdb_movies (
   original_language  STRING,
   poster_path        STRING,
   adult              BOOLEAN,
-  endpoint           STRING         COMMENT 'movie/popular, top_rated, now_playing or upcoming',
+  endpoint           STRING         COMMENT 'movie/popular, top_rated, now_playing, upcoming or trending/movie/day',
   dt                 DATE           COMMENT 'ingest date, from the dt= folder',
   batch_id           STRING         COMMENT 'ingest run, from the batch_id= folder',
   _source_file       STRING         COMMENT 'path of the delivered file',

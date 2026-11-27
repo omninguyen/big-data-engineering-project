@@ -17,6 +17,7 @@ DAG = {
     "ingest_tmdb": set(),
     "ingest_musicbrainz": set(),
     "bronze_tmdb_movies": {"ingest_tmdb", "setup_tables"},
+    "bronze_tmdb_trending_movies": {"ingest_tmdb", "setup_tables"},  # the same ingest as bronze_tmdb_movies
     "bronze_musicbrainz_release_groups": {"ingest_musicbrainz", "setup_tables"},
     "silver_movie": {"bronze_tmdb_movies"},
     "silver_movie_metric_daily": {"bronze_tmdb_movies"},
@@ -32,6 +33,7 @@ DAG = {
     "bronze_wikipedia_pageviews": {"ingest_wikipedia", "setup_tables"},
     "silver_media_wiki_page": {"bronze_wikidata_media_articles"},
     "silver_wiki_pageview_daily": {"bronze_wikipedia_pageviews"},
+    "silver_movie_trending_daily": {"bronze_tmdb_trending_movies"},
     "bronze_listenbrainz_release_group_popularity": {"ingest_listenbrainz", "setup_tables"},
     "silver_release_group_metric_daily": {"bronze_listenbrainz_release_group_popularity"},
     "gold_dim_date": {"setup_tables"},  # the calendar needs no source
@@ -43,8 +45,10 @@ DAG = {
     "gold_fact_media_change": {"silver_movie", "silver_release_group"},  # the SCD2 versions
     "gold_dim_wiki_page": {"silver_media_wiki_page", "gold_dim_media"},  # keeps media of dim_media only
     "gold_fact_wiki_pageview_daily": {"silver_wiki_pageview_daily", "gold_dim_wiki_page"},  # media of an article
-    "ops_pipeline_record_metrics": {"silver_movie", "silver_release_group_metric_daily",  # reads silver.load_log
-                                    "silver_media_wiki_page", "silver_wiki_pageview_daily"},
+    "gold_fact_media_trending_daily": {"silver_movie_trending_daily", "gold_dim_media"},  # keeps media of dim_media
+    "ops_pipeline_record_metrics": {"silver_movie", "silver_movie_trending_daily",  # reads silver.load_log
+                                    "silver_release_group_metric_daily", "silver_media_wiki_page",
+                                    "silver_wiki_pageview_daily"},
     "ops_data_quality_results": {"ops_pipeline_record_metrics"},
     "marts_views": {"setup_tables"},  # views need the tables, not their data
 }
