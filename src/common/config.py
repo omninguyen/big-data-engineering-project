@@ -57,11 +57,13 @@ MOVIE_SOURCE = _get("MOVIE_SOURCE", "tmdb").lower()  # tmdb | file (exported by 
 if MOVIE_SOURCE not in ("tmdb", "file", "sample"):
     raise ValueError(f"MOVIE_SOURCE must be tmdb, file or sample, got {MOVIE_SOURCE!r}")
 MOVIE_FILE = _get("MOVIE_FILE") or (f"{BRONZE_ROOT}/manual/tmdb_movies.json" if BRONZE_ROOT else "")
-TMDB_PAGES = int(_get("TMDB_PAGES", "20"))
+TMDB_PAGES = int(_get("TMDB_PAGES", "20"))  # pages of movie/popular and movie/top_rated (20 movies each)
+TMDB_NEW_PAGES = int(_get("TMDB_NEW_PAGES", "5"))  # pages of movie/now_playing and movie/upcoming: new movies
 MB_CONTACT = _get("MB_CONTACT", "you@example.com")  # MusicBrainz requires a contact in the User-Agent
 MB_GENRES = [g.strip() for g in _get(
     "MB_GENRES", "rock,pop,jazz,electronic,hip hop,classical,metal,folk,r&b,indie,country,soul"
 ).split(",") if g.strip()]
 MB_PAGES_PER_GENRE = int(_get("MB_PAGES_PER_GENRE", "2"))
+MB_NEW_DAYS = int(_get("MB_NEW_DAYS", "30"))  # also search the albums of each genre released in the last N days
 LB_BASE_URL = _get("LB_BASE_URL", "https://api.listenbrainz.org").rstrip("/")  # ListenBrainz, no token needed
 LB_BATCH_SIZE = int(_get("LB_BATCH_SIZE", "100"))  # albums per popularity request (the documented limit may be higher)

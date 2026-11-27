@@ -3,9 +3,13 @@
 No API key -> MissingCredentials (the task is skipped). HTTP errors or an empty result -> SourceError, so the task
 fails and Databricks retries it. Errors never include the request URL, which carries the API key.
 
+Endpoints: movie/popular and movie/top_rated (TMDB_PAGES pages each), and the new movies of movie/now_playing (in
+cinemas) and movie/upcoming (TMDB_NEW_PAGES pages each). Paging stops early at the last page of an endpoint.
+
 Rate limit: requests are sent one at a time on one connection, with a pause of PAUSE_S after each, so at most
 4 requests/s: about 10x under TMDB's ceiling (around 40-50 requests/s per IP) and within its old limit of 40 per
-10 s. A 429 is retried after its Retry-After (common/http.py). A run makes 1 + 2 x TMDB_PAGES requests (41).
+10 s. A 429 is retried after its Retry-After (common/http.py). A run makes at most
+1 + 2 x TMDB_PAGES + 2 x TMDB_NEW_PAGES requests (51).
 """
 import logging
 import time
@@ -19,7 +23,8 @@ from common.http import session
 from ingest.batch import bronze_key
 
 log = logging.getLogger(__name__)
-ENDPOINTS = ["movie/popular", "movie/top_rated"]
+ENDPOINTS = ["movie/popular", "movie/top_rated", "movie/now_playing", "movie/upcoming"]
+NEW_MOVIES = {"movie/now_playing", "movie/upcoming"}  # paged with TMDB_NEW_PAGES
 PAUSE_S = 0.25  # after every request: at most 4 requests/s
 
 
@@ -54,12 +59,14 @@ def run(ds: str, batch_id: str) -> int:
     now = datetime.now(timezone.utc).isoformat()
     records = []
     for ep in ENDPOINTS:
-        for page in range(1, config.TMDB_PAGES + 1):
+        pages = config.TMDB_NEW_PAGES if ep in NEW_MOVIES else config.TMDB_PAGES
+        for page in range(1, pages + 1):
             r = _get(sess, ep, {**auth, "page": page, "language": "en-US"})
             if r.status_code != 200:
                 log.warning("TMDB %s page %s -> HTTP %s", ep, page, r.status_code)
                 break
-            results = r.json().get("results", [])
+            payload = r.json()
+            results = payload.get("results", [])
             if not results:
                 break
             for m in results:
@@ -67,8 +74,10 @@ def run(ds: str, batch_id: str) -> int:
                 m["_endpoint"] = ep
                 m["_ingested_at"] = now
                 records.append(m)
+            if page >= payload.get("total_pages", pages):  # the last page of this endpoint
+                break
     if not records:
-        raise SourceError("tmdb", "no movies returned by movie/popular and movie/top_rated")
+        raise SourceError("tmdb", f"no movies returned by {', '.join(ENDPOINTS)}")
     key = bronze_key("tmdb", "movies", ds, batch_id, "movies.jsonl")
     n = storage.put_jsonl(key, records)
     log.info("TMDB: wrote %s records to %s", n, storage.bronze_path(key))
