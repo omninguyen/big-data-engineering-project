@@ -37,7 +37,7 @@ class TmdbTest(unittest.TestCase):
     def run_with(self, handler, key=KEY):
         sess = FakeSession(handler)
         with mock.patch.object(config, "TMDB_API_KEY", key), mock.patch.object(config, "TMDB_PAGES", 1), \
-                mock.patch.object(config, "BRONZE_ROOT", ADLS), \
+                mock.patch.object(config, "TMDB_NEW_PAGES", 1), mock.patch.object(config, "BRONZE_ROOT", ADLS), \
                 mock.patch.object(tmdb, "session", return_value=sess), mock.patch.object(tmdb.time, "sleep"), \
                 mock.patch("common.storage.put_jsonl", side_effect=lambda k, recs: len(list(recs))) as put:
             return tmdb.run("2026-11-24", "B1"), put, sess
@@ -52,9 +52,32 @@ class TmdbTest(unittest.TestCase):
                 return response(payload={"genres": [{"id": 28, "name": "Action"}]})
             return response(payload={"results": [{"id": 1, "title": "A", "genre_ids": [28]}]})
         n, put, _ = self.run_with(handler)
-        self.assertEqual(n, 2)  # popular + top_rated, 1 page each
+        self.assertEqual(n, 4)  # popular, top_rated, now_playing and upcoming, 1 page each
         key, recs = put.call_args.args
         self.assertEqual(key, "bronze/tmdb/movies/dt=2026-11-24/batch_id=B1/movies.jsonl")
+
+    def test_new_movies_from_now_playing_and_upcoming(self):
+        def handler(url, params):
+            if url.endswith("genre/movie/list"):
+                return response(payload={"genres": []})
+            return response(payload={"results": [{"id": 1}], "total_pages": 9})
+        _, put, sess = self.run_with(handler)
+        self.assertEqual([r["_endpoint"] for r in put.call_args.args[1]],
+                         ["movie/popular", "movie/top_rated", "movie/now_playing", "movie/upcoming"])
+        self.assertEqual(tmdb.NEW_MOVIES, {"movie/now_playing", "movie/upcoming"})
+
+    def test_paging_stops_at_the_last_page(self):
+        def handler(url, params):
+            if url.endswith("genre/movie/list"):
+                return response(payload={"genres": []})
+            return response(payload={"results": [{"id": params["page"]}], "total_pages": 2})
+        sess = FakeSession(handler)
+        with mock.patch.object(config, "TMDB_API_KEY", KEY), mock.patch.object(config, "TMDB_PAGES", 5), \
+                mock.patch.object(config, "TMDB_NEW_PAGES", 5), mock.patch.object(config, "BRONZE_ROOT", ADLS), \
+                mock.patch.object(tmdb, "session", return_value=sess), mock.patch.object(tmdb.time, "sleep"), \
+                mock.patch("common.storage.put_jsonl", side_effect=lambda k, recs: len(list(recs))):
+            self.assertEqual(tmdb.run("2026-11-24", "B1"), 4 * 2)
+        self.assertEqual(len(sess.calls), 1 + 4 * 2)  # genre list + 2 pages of each endpoint, not 5
 
     def test_pauses_after_every_request(self):
         """At most 4 requests/s: under TMDB's ceiling (around 40/s) and within its old limit of 40 per 10 s."""
@@ -62,10 +85,11 @@ class TmdbTest(unittest.TestCase):
             return response(payload={"genres": []} if url.endswith("list") else {"results": [{"id": 1}]})
         sess = FakeSession(handler)
         with mock.patch.object(config, "TMDB_API_KEY", KEY), mock.patch.object(config, "TMDB_PAGES", 3), \
-                mock.patch.object(config, "BRONZE_ROOT", ADLS), mock.patch.object(tmdb, "session", return_value=sess), \
+                mock.patch.object(config, "TMDB_NEW_PAGES", 2), mock.patch.object(config, "BRONZE_ROOT", ADLS), \
+                mock.patch.object(tmdb, "session", return_value=sess), \
                 mock.patch.object(tmdb.time, "sleep") as sleep, mock.patch("common.storage.put_jsonl", return_value=6):
             tmdb.run("2026-11-24", "B1")
-        self.assertEqual(len(sess.calls), 1 + 2 * 3)  # genre list + 3 pages of each endpoint
+        self.assertEqual(len(sess.calls), 1 + 2 * 3 + 2 * 2)  # genre list, 3 pages of the lists, 2 of the new movies
         self.assertEqual([c.args for c in sleep.call_args_list], [(0.25,)] * len(sess.calls))
         self.assertLessEqual(1 / tmdb.PAUSE_S, 4)
 
@@ -93,10 +117,11 @@ class TmdbTest(unittest.TestCase):
 
 @unittest.skipIf(requests is None, "requests not installed")
 class MusicBrainzTest(unittest.TestCase):
-    def run_with(self, handler):
+    def run_with(self, handler, sess=None):
+        sess = sess or FakeSession(handler)
         with mock.patch.object(config, "MB_GENRES", ["jazz", "rock"]), mock.patch.object(config, "MB_PAGES_PER_GENRE", 1), \
-                mock.patch.object(config, "BRONZE_ROOT", ADLS), \
-                mock.patch.object(musicbrainz, "session", return_value=FakeSession(handler)), \
+                mock.patch.object(config, "MB_NEW_DAYS", 30), mock.patch.object(config, "BRONZE_ROOT", ADLS), \
+                mock.patch.object(musicbrainz, "session", return_value=sess), \
                 mock.patch.object(musicbrainz.time, "sleep"), \
                 mock.patch("common.storage.put_jsonl", side_effect=lambda k, recs: len(list(recs))) as put:
             n = musicbrainz.run("2026-11-24", "B1")
@@ -109,7 +134,24 @@ class MusicBrainzTest(unittest.TestCase):
             if "jazz" in params["query"]:
                 raise requests.Timeout("timeout")
             return response(payload={"release-groups": [{"id": "x", "title": "Rock album"}]})
-        self.assertEqual(self.run_with(handler), 1)
+        self.assertEqual(self.run_with(handler), 2)  # rock: best matches + new albums
+
+    def test_new_albums_of_each_genre(self):
+        sess = FakeSession(lambda url, params: response(payload={"release-groups": [{"id": "x"}]}))
+        self.run_with(None, sess)
+        queries = [params["query"] for _, params in sess.calls]
+        self.assertEqual(queries, [
+            'tag:"jazz" AND primarytype:album',
+            'tag:"jazz" AND primarytype:album AND firstreleasedate:[2026-10-25 TO 2026-11-24]',  # last 30 days
+            'tag:"rock" AND primarytype:album',
+            'tag:"rock" AND primarytype:album AND firstreleasedate:[2026-10-25 TO 2026-11-24]'])
+
+    def test_new_albums_are_searched_even_when_the_best_matches_fail(self):
+        def handler(url, params):
+            if "firstreleasedate" not in params["query"]:
+                return response(status=503)
+            return response(payload={"release-groups": [{"id": "new"}]})
+        self.assertEqual(self.run_with(handler), 2)  # one new album per genre
 
     def test_nothing_at_all_fails(self):
         with self.assertRaises(SourceError):
