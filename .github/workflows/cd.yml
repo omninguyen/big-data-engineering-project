@@ -8,7 +8,7 @@
 #   BRONZE_ROOT                                       raw files, abfss://bronze@<account>.dfs.core.windows.net/landing
 #   SILVER_ROOT                                       silver tables, abfss://silver@<account>.dfs.core.windows.net
 #   GOLD_ROOT                                         gold tables, abfss://gold@<account>.dfs.core.windows.net
-# Variable (optional): INGEST_SCHEDULE = UNPAUSED switches the daily schedule on. Default PAUSED.
+# Variable (optional): INGEST_SCHEDULE = PAUSED switches the daily schedule off. Default UNPAUSED.
 name: cd
 
 on:
@@ -44,7 +44,7 @@ jobs:
       BUNDLE_VAR_bronze_root: ${{ secrets.BRONZE_ROOT }}
       BUNDLE_VAR_silver_root: ${{ secrets.SILVER_ROOT }}
       BUNDLE_VAR_gold_root: ${{ secrets.GOLD_ROOT }}
-      BUNDLE_VAR_schedule_status: ${{ vars.INGEST_SCHEDULE || 'PAUSED' }}
+      BUNDLE_VAR_schedule_status: ${{ vars.INGEST_SCHEDULE || 'UNPAUSED' }}
     steps:
       - uses: actions/checkout@v4
       - uses: databricks/setup-cli@main   # pin a release tag for reproducible deploys

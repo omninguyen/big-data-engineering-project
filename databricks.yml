@@ -16,8 +16,8 @@ variables:
   gold_root:
     description: The ADLS container gold, abfss://gold@<account>.dfs.core.windows.net (GitHub secret GOLD_ROOT).
   schedule_status:
-    description: PAUSED or UNPAUSED (GitHub variable INGEST_SCHEDULE). Every deploy applies it to the schedule.
-    default: PAUSED
+    description: UNPAUSED or PAUSED (GitHub variable INGEST_SCHEDULE). Every deploy applies it to the schedule.
+    default: UNPAUSED
 
 sync:
   paths:
@@ -46,7 +46,7 @@ resources:
             dependencies:
               - requests>=2.31,<3
       # One task per table, so the job graph shows the path of the data: source -> bronze -> silver -> gold.
-      # The ops tasks come last and monitor every batch.
+      # The ops tasks come last and monitor every batch. marts_views (re)creates the views read by the dashboard.
       # The TMDB and MusicBrainz paths are independent: when one source fails, the other still reaches silver,
       # and the next run catches up (COPY INTO and silver.load_log only take what is new).
       tasks:
@@ -289,3 +289,13 @@ resources:
           spark_python_task:
             python_file: ./src/pipeline.py
             parameters: ["ops", "--table", "data_quality_results"]
+        - task_key: marts_views   # views over gold and ops for the dashboard (Preset); they hold no data
+          depends_on:
+            - task_key: setup_tables
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 900
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["marts"]

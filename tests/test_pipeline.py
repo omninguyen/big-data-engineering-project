@@ -99,6 +99,9 @@ class TablesTest(unittest.TestCase):
                          ({"t": 1}, ("data_quality_results",)))
         self.assertEqual(self.run_with(["ops"], "load_ops_tables"), ({"t": 1}, ()))
 
+    def test_marts_creates_the_views(self):
+        self.assertEqual(self.run_with(["marts"], "create_marts_views"), ({"t": 1}, ()))
+
     def test_unknown_table_is_rejected(self):
         for argv in (["bronze", "--table", "movie"], ["silver", "--table", "load_log"], ["silver", "--table", "x"],
                      ["gold", "--table", "movie"], ["ops", "--table", "dim_date"]):

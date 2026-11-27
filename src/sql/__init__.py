@@ -10,6 +10,8 @@ src/sql/gold/<table>.sql         creates <catalog>.gold.<table>, an external Del
 src/sql/gold/load/<table>.sql    rebuilds it from silver on every run (full load)
 src/sql/ops/<table>.sql          creates <catalog>.ops.<table> (pipeline metrics, data quality) in <ops root>/<table>
 src/sql/ops/load/<table>.sql     rebuilds it from bronze and silver.load_log on every run (full load)
+src/sql/marts/<view>.sql         creates or replaces the view <catalog>.marts.<view> over gold and ops: one view per
+                                 dataset of the dashboard (Preset), no data of its own
 ${...} placeholders are filled in from common/config.py (UC_CATALOG, BRONZE_TABLES_ROOT, BRONZE_ROOT, SILVER_ROOT,
 GOLD_ROOT, OPS_ROOT),
 so the files hold no workspace or storage details. A file may hold several statements, each ending with ';' at the
@@ -34,6 +36,8 @@ SILVER_LOADED = [*SILVER_INCREMENTAL, *SILVER_FULL]  # every silver table with a
 GOLD_TABLES = ["dim_date", "dim_media", "dim_genre", "bridge_media_genre",  # full loads; dims before their foreign keys
                "fact_media_metric_daily"]
 OPS_TABLES = ["pipeline_record_metrics", "data_quality_results"]  # full loads; data_quality_results reads the first
+MARTS_VIEWS = ["catalog_items", "items_per_genre", "items_per_release_year", "movies_by_language", "top_titles",
+               "daily_listens", "trending_7d"]
 BATCH_ID = re.compile(r"[0-9A-Za-z-]+")
 
 
@@ -197,3 +201,16 @@ def load_ops_tables(spark) -> dict:
     """Rebuild every ops table. Returns {table: {"rows": n}}."""
     from common import config
     return {f"{config.UC_CATALOG}.ops.{name}": load_ops_table(spark, name) for name in OPS_TABLES}
+
+
+def create_marts_views(spark) -> list:
+    """Create or replace every view of the marts schema (pipeline.py marts). Views hold no data: they read gold and
+    ops when queried, so they only need to be recreated when their SQL changes. Returns the views."""
+    from common import config
+    views = []
+    for name in MARTS_VIEWS:
+        for statement in statements(render("marts", name, catalog=config.UC_CATALOG)):
+            spark.sql(statement)
+        views.append(f"{config.UC_CATALOG}.marts.{name}")
+        log.info("%s.marts.%s: view created or replaced", config.UC_CATALOG, name)
+    return views
