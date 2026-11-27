@@ -28,6 +28,10 @@ DAG = {
     "silver_release_group_artist": {"silver_release_group", "silver_artist"},
     "ingest_listenbrainz": {"silver_release_group"},  # looks up the albums known to silver
     "ingest_wikipedia": {"silver_movie", "silver_release_group"},  # looks up the movies and albums known to silver
+    "bronze_wikidata_media_articles": {"ingest_wikipedia", "setup_tables"},
+    "bronze_wikipedia_pageviews": {"ingest_wikipedia", "setup_tables"},
+    "silver_media_wiki_page": {"bronze_wikidata_media_articles"},
+    "silver_wiki_pageview_daily": {"bronze_wikipedia_pageviews"},
     "bronze_listenbrainz_release_group_popularity": {"ingest_listenbrainz", "setup_tables"},
     "silver_release_group_metric_daily": {"bronze_listenbrainz_release_group_popularity"},
     "gold_dim_date": {"setup_tables"},  # the calendar needs no source
@@ -37,7 +41,8 @@ DAG = {
     "gold_fact_media_metric_daily": {"silver_movie_metric_daily", "silver_release_group_metric_daily",
                                      "gold_dim_media"},  # reads gold.dim_media
     "gold_fact_media_change": {"silver_movie", "silver_release_group"},  # the SCD2 versions
-    "ops_pipeline_record_metrics": {"silver_movie", "silver_release_group_metric_daily"},  # reads silver.load_log
+    "ops_pipeline_record_metrics": {"silver_movie", "silver_release_group_metric_daily",  # reads silver.load_log
+                                    "silver_media_wiki_page", "silver_wiki_pageview_daily"},
     "ops_data_quality_results": {"ops_pipeline_record_metrics"},
     "marts_views": {"setup_tables"},  # views need the tables, not their data
 }

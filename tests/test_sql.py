@@ -18,7 +18,8 @@ GOLD = "abfss://gold@acct.dfs.core.windows.net"
 OPS = f"{GOLD}/ops"
 ROOTS = {"bronze": ROOT, "silver": SILVER, "gold": GOLD, "ops": OPS}
 SOURCES = {"tmdb_movies": "tmdb/movies", "musicbrainz_release_groups": "musicbrainz/release_groups",
-           "listenbrainz_release_group_popularity": "listenbrainz/release_group_popularity"}
+           "listenbrainz_release_group_popularity": "listenbrainz/release_group_popularity",
+           "wikidata_media_articles": "wikidata/media_articles", "wikipedia_pageviews": "wikipedia/pageviews"}
 
 
 def create(layer: str, name: str) -> str:
@@ -89,6 +90,12 @@ class StatementTest(unittest.TestCase):
             self.assertLessEqual({"id", "title"}, set(columns(name)))
         self.assertEqual(columns("listenbrainz_release_group_popularity")[:3],
                          ["release_group_mbid", "total_listen_count", "total_user_count"])
+        self.assertEqual(columns("wikidata_media_articles")[:5],
+                         ["media_type", "source_id", "wikidata_id", "article", "url"])
+        self.assertEqual(columns("wikipedia_pageviews")[:5], ["project", "article", "view_date", "views", "agent"])
+        # the API gives the day as yyyymmddhh
+        self.assertIn("substr(value:['timestamp'], 1, 4), substr(value:['timestamp'], 5, 2)",
+                      load("wikipedia_pageviews"))
         # fields written by the ingest that silver may need
         self.assertLessEqual({"endpoint", "genres", "genre_ids", "overview", "original_title", "poster_path"},
                              set(columns("tmdb_movies")))
@@ -134,9 +141,8 @@ class CreateTest(unittest.TestCase):
     def test_creates_the_tables_and_checks_where_they_are(self):
         spark = FakeSpark()
         with self.assertLogs("sql", "INFO"):
-            self.assertEqual(self.create(spark), ["cat.bronze.tmdb_movies", "cat.bronze.musicbrainz_release_groups",
-                                                  "cat.bronze.listenbrainz_release_group_popularity"])
-        self.assertEqual(len(spark.statements), 6)
+            self.assertEqual(self.create(spark), [f"cat.bronze.{name}" for name in sql.BRONZE_TABLES])
+        self.assertEqual(len(spark.statements), 2 * len(sql.BRONZE_TABLES))  # CREATE, then DESCRIBE DETAIL
         self.assertIn("CREATE TABLE IF NOT EXISTS cat.bronze.tmdb_movies", spark.statements[0])
         self.assertEqual(spark.statements[1], "DESCRIBE DETAIL cat.bronze.tmdb_movies")
 
@@ -161,7 +167,7 @@ class LoadTest(unittest.TestCase):
         with self.assertLogs("sql", "INFO"):
             loaded = self.load(spark)
         self.assertEqual(loaded, {f"cat.bronze.{name}": {"num_inserted_rows": 3} for name in sql.BRONZE_TABLES})
-        self.assertEqual([s.count("COPY INTO cat.bronze.") for s in spark.statements], [1, 1, 1])
+        self.assertEqual([s.count("COPY INTO cat.bronze.") for s in spark.statements], [1] * len(sql.BRONZE_TABLES))
 
     def test_landing_must_be_an_abfss_path(self):
         for landing in ("", "/tmp/landing", f"{LANDING}' OR '1"):
@@ -221,6 +227,12 @@ class SilverStatementTest(unittest.TestCase):
         self.assertEqual(columns("release_group_artist", "silver"), [
             "release_group_id", "artist_id", "position", "credited_name", "join_phrase", "_loaded_at"])
         self.assertIn("PRIMARY KEY (release_group_id, artist_id)", create("silver", "release_group_artist"))
+        self.assertEqual(columns("media_wiki_page", "silver"), [
+            "media_type", "source_id", "wikidata_id", "article", "url", "batch_id", "_loaded_at"])
+        self.assertIn("PRIMARY KEY (media_type, source_id)", create("silver", "media_wiki_page"))
+        self.assertEqual(columns("wiki_pageview_daily", "silver"),
+                         ["article", "view_date", "views", "batch_id", "_loaded_at"])
+        self.assertIn("PRIMARY KEY (article, view_date)", create("silver", "wiki_pageview_daily"))
 
     def test_full_loads(self):
         for name in sql.SILVER_FULL:
@@ -297,6 +309,20 @@ class SilverStatementTest(unittest.TestCase):
         self.assertIn("WHEN MATCHED AND s.batch_id > t.batch_id THEN UPDATE", steps[0])
         self.assertEqual(column_list(steps[0]), columns("release_group_metric_daily", "silver"))
 
+    def test_wikipedia_loads(self):
+        for name, source in (("media_wiki_page", "wikidata_media_articles"),
+                             ("wiki_pageview_daily", "wikipedia_pageviews")):
+            with self.subTest(table=name):
+                steps = sql.statements(sql.render("silver/load", name, catalog="cat", batch_id="B1"))
+                self.assertEqual(len(steps), 1)
+                self.assertIn(f"FROM cat.bronze.{source}", steps[0])
+                self.assertIn("WHERE batch_id = 'B1'", steps[0])
+                self.assertIn("WHEN MATCHED AND s.batch_id > t.batch_id THEN UPDATE", steps[0])  # the later batch wins
+                self.assertEqual(column_list(steps[0]), columns(name, "silver"))
+        mapping = sql.render("silver/load", "media_wiki_page", catalog="cat", batch_id="B1")
+        self.assertIn("GROUP BY media_type, source_id", mapping)  # one article per movie or album
+        self.assertIn("min_by(url, article)", mapping)
+
     def test_metric_load_and_the_load_log(self):
         steps = sql.statements(sql.render("silver/load", "movie_metric_daily", catalog="cat", batch_id="B1"))
         self.assertEqual(len(steps), 1)
@@ -322,6 +348,7 @@ class SilverTest(unittest.TestCase):
             "cat.silver.movie": {"batches": 2}, "cat.silver.movie_metric_daily": {"batches": 1},
             "cat.silver.release_group": {"batches": 0}, "cat.silver.artist": {"batches": 0},
             "cat.silver.release_group_metric_daily": {"batches": 0},
+            "cat.silver.media_wiki_page": {"batches": 0}, "cat.silver.wiki_pageview_daily": {"batches": 0},
             "cat.silver.genre": {"rows": 2}, "cat.silver.movie_genre": {"rows": 2},
             "cat.silver.release_group_genre": {"rows": 2}, "cat.silver.release_group_artist": {"rows": 2}})
         logged = [s for s in spark.statements if "INSERT INTO cat.silver.load_log" in s]
@@ -503,6 +530,10 @@ class OpsStatementTest(unittest.TestCase):
         "listenbrainz_release_group_popularity": (
             "release_group_metric_daily",
             "release_group_mbid <> '' AND total_listen_count IS NOT NULL AND dt IS NOT NULL"),
+        "wikidata_media_articles": (
+            "media_wiki_page", "media_type IN ('movie', 'music') AND source_id <> '' AND article <> ''"),
+        "wikipedia_pageviews": (
+            "wiki_pageview_daily", "article <> '' AND views IS NOT NULL AND view_date IS NOT NULL"),
     }
 
     def test_external_delta_tables_in_ops_with_a_primary_key(self):

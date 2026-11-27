@@ -1,6 +1,7 @@
 -- Full load of ops.pipeline_record_metrics (pipeline.py ops): rebuilt on every run, in one write (INSERT OVERWRITE),
 -- from every batch in bronze. valid_key is the key silver takes from a row, or NULL when the silver load filters it
--- out: the same predicates as silver/load/movie.sql, release_group.sql and release_group_metric_daily.sql.
+-- out: the same predicates as silver/load/movie.sql, release_group.sql, release_group_metric_daily.sql,
+-- media_wiki_page.sql and wiki_pageview_daily.sql.
 WITH bronze_rows AS (
   SELECT
     'tmdb_movies' AS dataset, 'movie' AS target, batch_id, dt, _source_file, _file_size, _file_modified_at,
@@ -20,6 +21,20 @@ WITH bronze_rows AS (
     CASE WHEN release_group_mbid <> '' AND total_listen_count IS NOT NULL AND dt IS NOT NULL
       THEN release_group_mbid END
   FROM ${catalog}.bronze.listenbrainz_release_group_popularity
+  UNION ALL
+  SELECT
+    'wikidata_media_articles', 'media_wiki_page', batch_id, dt, _source_file, _file_size, _file_modified_at,
+    _ingested_at,
+    CASE WHEN media_type IN ('movie', 'music') AND source_id <> '' AND article <> ''
+      THEN concat(media_type, ':', source_id) END
+  FROM ${catalog}.bronze.wikidata_media_articles
+  UNION ALL
+  SELECT
+    'wikipedia_pageviews', 'wiki_pageview_daily', batch_id, dt, _source_file, _file_size, _file_modified_at,
+    _ingested_at,
+    CASE WHEN article <> '' AND views IS NOT NULL AND view_date IS NOT NULL
+      THEN concat(article, '|', CAST(view_date AS STRING)) END
+  FROM ${catalog}.bronze.wikipedia_pageviews
 ),
 batches AS (
   SELECT
