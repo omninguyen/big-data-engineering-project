@@ -9,8 +9,8 @@ then the bronze, silver and gold tables in Unity Catalog, and the ops tables tha
   python pipeline.py [--set KEY=VALUE ...] ops [--table <ops table>]
   python pipeline.py [--set KEY=VALUE ...] marts
 
-ingest     TMDB movies -> <bronze>/tmdb/movies/dt=<date>/batch_id=<batch id>/ and the rank of today's trending
-           movies -> <bronze>/tmdb/trending_movies/, MusicBrainz albums ->
+ingest     TMDB movies -> <bronze>/tmdb/movies/dt=<date>/batch_id=<batch id>/, the rank of today's trending
+           movies -> <bronze>/tmdb/trending_movies/ and TV shows -> <bronze>/tmdb/tv_shows/, MusicBrainz albums ->
            <bronze>/musicbrainz/release_groups/dt=<date>/batch_id=<batch id>/, ListenBrainz listen counts of the
            albums in silver.release_group -> <bronze>/listenbrainz/release_group_popularity/dt=<date>/batch_id=<id>/,
            Wikipedia articles and pageviews of the movies and albums in silver -> <bronze>/wikidata/media_articles/
@@ -54,6 +54,9 @@ if _SRC not in sys.path:
 log = logging.getLogger("pipeline")
 
 
+NO_API_FOLDERS = ["trending_movies", "tv_shows"]  # TMDB folders only the API fills (not MOVIE_SOURCE=file, sample)
+
+
 def _date(value: str) -> str:
     """YYYY-MM-DD (it ends up in a folder name), or today in Vietnam time when empty."""
     from ingest.batch import today
@@ -84,19 +87,19 @@ def ingest(args) -> int:
     if config.MOVIE_SOURCE == "file":  # TMDB export uploaded to MOVIE_FILE, by default <bronze>/manual/
         from ingest import tmdb_file
         n = tmdb_file.run(args.date, batch_id)
-        _keep_tmdb_folders(args.date, batch_id, ["trending_movies"], "MOVIE_SOURCE=file has no trending movies")
+        _keep_tmdb_folders(args.date, batch_id, NO_API_FOLDERS, "MOVIE_SOURCE=file has no trending or TV shows")
         return n
     if config.MOVIE_SOURCE == "sample":  # built-in demo set, no network needed
         from ingest import sample_movies
         n = sample_movies.run(args.date, batch_id)
-        _keep_tmdb_folders(args.date, batch_id, ["trending_movies"], "MOVIE_SOURCE=sample has no trending movies")
+        _keep_tmdb_folders(args.date, batch_id, NO_API_FOLDERS, "MOVIE_SOURCE=sample has no trending or TV shows")
         return n
     from ingest import tmdb
     from common.errors import MissingCredentials
     try:
         return tmdb.run(args.date, batch_id)
     except MissingCredentials as e:
-        _keep_tmdb_folders(args.date, batch_id, ["movies", "trending_movies"], f"Skipping TMDB ingest: {e}")
+        _keep_tmdb_folders(args.date, batch_id, ["movies", *NO_API_FOLDERS], f"Skipping TMDB ingest: {e}")
         return 0
 
 

@@ -1,6 +1,7 @@
 -- Full load of silver.genre (pipeline.py silver): rebuilt on every run, in one write (INSERT OVERWRITE), from the
--- bronze tables: the genres of TMDB movies (sample movies left out, as in silver.movie) and the genres the
--- MusicBrainz ingest searches for (query_genre, see silver/load/release_group_genre.sql).
+-- bronze tables: the genres of TMDB movies (sample movies left out, as in silver.movie), of TMDB TV shows (a list of
+-- its own, e.g. Sci-Fi & Fantasy: tmdb_tv:<name>) and the genres the MusicBrainz ingest searches for (query_genre,
+-- see silver/load/release_group_genre.sql).
 INSERT OVERWRITE ${catalog}.silver.genre (genre_id, name, source, _loaded_at)
 SELECT
   genre_id,
@@ -12,6 +13,13 @@ FROM (
   FROM (
     SELECT explode(genres) AS name
     FROM ${catalog}.bronze.tmdb_movies
+    WHERE try_cast(id AS BIGINT) IS NOT NULL
+  )
+  UNION ALL
+  SELECT concat('tmdb_tv:', lower(trim(name))), trim(name), 'tmdb_tv'
+  FROM (
+    SELECT explode(genres) AS name
+    FROM ${catalog}.bronze.tmdb_tv_shows
     WHERE try_cast(id AS BIGINT) IS NOT NULL
   )
   UNION ALL

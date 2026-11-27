@@ -18,12 +18,16 @@ DAG = {
     "ingest_musicbrainz": set(),
     "bronze_tmdb_movies": {"ingest_tmdb", "setup_tables"},
     "bronze_tmdb_trending_movies": {"ingest_tmdb", "setup_tables"},  # the same ingest as bronze_tmdb_movies
+    "bronze_tmdb_tv_shows": {"ingest_tmdb", "setup_tables"},
+    "silver_tv_show": {"bronze_tmdb_tv_shows"},
+    "silver_tv_show_metric_daily": {"bronze_tmdb_tv_shows"},
+    "silver_tv_show_genre": {"silver_tv_show", "silver_genre"},
     "bronze_musicbrainz_release_groups": {"ingest_musicbrainz", "setup_tables"},
     "silver_movie": {"bronze_tmdb_movies"},
     "silver_movie_metric_daily": {"bronze_tmdb_movies"},
     "silver_release_group": {"bronze_musicbrainz_release_groups"},
     "silver_artist": {"bronze_musicbrainz_release_groups"},
-    "silver_genre": {"bronze_tmdb_movies", "bronze_musicbrainz_release_groups"},
+    "silver_genre": {"bronze_tmdb_movies", "bronze_tmdb_tv_shows", "bronze_musicbrainz_release_groups"},
     "silver_movie_genre": {"silver_movie", "silver_genre"},
     "silver_release_group_genre": {"silver_release_group", "silver_genre"},
     "silver_release_group_artist": {"silver_release_group", "silver_artist"},
@@ -46,7 +50,7 @@ DAG = {
     "gold_dim_wiki_page": {"silver_media_wiki_page", "gold_dim_media"},  # keeps media of dim_media only
     "gold_fact_wiki_pageview_daily": {"silver_wiki_pageview_daily", "gold_dim_wiki_page"},  # media of an article
     "gold_fact_media_trending_daily": {"silver_movie_trending_daily", "gold_dim_media"},  # keeps media of dim_media
-    "ops_pipeline_record_metrics": {"silver_movie", "silver_movie_trending_daily",  # reads silver.load_log
+    "ops_pipeline_record_metrics": {"silver_movie", "silver_movie_trending_daily", "silver_tv_show",  # load_log
                                     "silver_release_group_metric_daily", "silver_media_wiki_page",
                                     "silver_wiki_pageview_daily"},
     "ops_data_quality_results": {"ops_pipeline_record_metrics"},

@@ -38,7 +38,7 @@ class TmdbTest(unittest.TestCase):
         sess = FakeSession(handler)
         with mock.patch.object(config, "TMDB_API_KEY", key), mock.patch.object(config, "TMDB_PAGES", 1), \
                 mock.patch.object(config, "TMDB_NEW_PAGES", 1), mock.patch.object(config, "TMDB_TRENDING_PAGES", 1), \
-                mock.patch.object(config, "BRONZE_ROOT", ADLS), \
+                mock.patch.object(config, "TMDB_TV_PAGES", 1), mock.patch.object(config, "BRONZE_ROOT", ADLS), \
                 mock.patch.object(tmdb, "session", return_value=sess), mock.patch.object(tmdb.time, "sleep"), \
                 mock.patch("common.storage.put_jsonl", side_effect=lambda k, recs: len(list(recs))) as put:
             return tmdb.run("2026-11-24", "B1"), put, sess
@@ -82,7 +82,7 @@ class TmdbTest(unittest.TestCase):
                 page = {1: [{"id": 7}, {"id": 3}], 2: [{"id": 3}, {"id": 9}]}[params["page"]]
                 return response(payload={"results": page, "total_pages": 2})
             return response(payload={"results": [{"id": 1}]})
-        with mock.patch.object(config, "TMDB_TRENDING_PAGES", 2):
+        with mock.patch.object(config, "TMDB_TRENDING_PAGES", 2), mock.patch.object(config, "TMDB_TV_PAGES", 1):
             sess = FakeSession(handler)
             with mock.patch.object(config, "TMDB_API_KEY", KEY), mock.patch.object(config, "TMDB_PAGES", 1), \
                     mock.patch.object(config, "TMDB_NEW_PAGES", 1), mock.patch.object(config, "BRONZE_ROOT", ADLS), \
@@ -92,6 +92,36 @@ class TmdbTest(unittest.TestCase):
         trending = self.files(put)["bronze/tmdb/trending_movies/dt=2026-11-24/batch_id=B1/trending_movies.jsonl"]
         self.assertEqual([(t["id"], t["rank"]) for t in trending], [(7, 1), (3, 2), (9, 3)])
         self.assertTrue(all(t["_ingested_at"] for t in trending))
+
+    def test_tv_shows_with_their_own_genre_list(self):
+        def handler(url, params):
+            if url.endswith("genre/movie/list"):
+                return response(payload={"genres": [{"id": 18, "name": "Drama"}]})
+            if url.endswith("genre/tv/list"):
+                return response(payload={"genres": [{"id": 10765, "name": "Sci-Fi & Fantasy"}]})
+            if url.endswith("tv/popular"):
+                return response(payload={"results": [{"id": 1399, "name": "A show", "genre_ids": [10765, 18]}]})
+            return response(payload={"results": [{"id": 1, "genre_ids": [18]}]})
+        n, put, sess = self.run_with(handler)
+        self.assertEqual(n, 5)  # movie records
+        shows = self.files(put)["bronze/tmdb/tv_shows/dt=2026-11-24/batch_id=B1/tv_shows.jsonl"]
+        self.assertEqual(len(shows), 1)
+        self.assertEqual(shows[0]["genres"], ["Sci-Fi & Fantasy"])  # TV genre ids, not movie ones
+        self.assertEqual(shows[0]["_endpoint"], "tv/popular")
+        self.assertTrue(shows[0]["_ingested_at"])
+        self.assertIn("/3/genre/tv/list", [url[len("https://api.themoviedb.org"):] for url, _ in sess.calls])
+
+    def test_tv_failure_still_writes_an_empty_file(self):
+        def handler(url, params):
+            if url.endswith("/list"):
+                return response(payload={"genres": []})
+            if url.endswith("tv/popular"):
+                return response(status=503)
+            return response(payload={"results": [{"id": 1}]})
+        with self.assertLogs("ingest.tmdb", "WARNING"):
+            n, put, _ = self.run_with(handler)
+        self.assertEqual(n, 5)  # the movies are still written
+        self.assertEqual(self.files(put)["bronze/tmdb/tv_shows/dt=2026-11-24/batch_id=B1/tv_shows.jsonl"], [])
 
     def test_trending_failure_still_writes_an_empty_ranking(self):
         def handler(url, params):
@@ -108,17 +138,17 @@ class TmdbTest(unittest.TestCase):
 
     def test_paging_stops_at_the_last_page(self):
         def handler(url, params):
-            if url.endswith("genre/movie/list"):
+            if url.endswith("/list"):
                 return response(payload={"genres": []})
             return response(payload={"results": [{"id": params["page"]}], "total_pages": 2})
         sess = FakeSession(handler)
         with mock.patch.object(config, "TMDB_API_KEY", KEY), mock.patch.object(config, "TMDB_PAGES", 5), \
                 mock.patch.object(config, "TMDB_NEW_PAGES", 5), mock.patch.object(config, "TMDB_TRENDING_PAGES", 5), \
-                mock.patch.object(config, "BRONZE_ROOT", ADLS), \
+                mock.patch.object(config, "TMDB_TV_PAGES", 5), mock.patch.object(config, "BRONZE_ROOT", ADLS), \
                 mock.patch.object(tmdb, "session", return_value=sess), mock.patch.object(tmdb.time, "sleep"), \
                 mock.patch("common.storage.put_jsonl", side_effect=lambda k, recs: len(list(recs))):
-            self.assertEqual(tmdb.run("2026-11-24", "B1"), 5 * 2)
-        self.assertEqual(len(sess.calls), 1 + 5 * 2)  # genre list + 2 pages of each endpoint, not 5
+            self.assertEqual(tmdb.run("2026-11-24", "B1"), 5 * 2)  # movie records
+        self.assertEqual(len(sess.calls), 2 + 6 * 2)  # 2 genre lists + 2 pages of each endpoint (TV too), not 5
 
     def test_pauses_after_every_request(self):
         """At most 4 requests/s: under TMDB's ceiling (around 40/s) and within its old limit of 40 per 10 s."""
@@ -127,12 +157,12 @@ class TmdbTest(unittest.TestCase):
         sess = FakeSession(handler)
         with mock.patch.object(config, "TMDB_API_KEY", KEY), mock.patch.object(config, "TMDB_PAGES", 3), \
                 mock.patch.object(config, "TMDB_NEW_PAGES", 2), mock.patch.object(config, "TMDB_TRENDING_PAGES", 1), \
-                mock.patch.object(config, "BRONZE_ROOT", ADLS), \
+                mock.patch.object(config, "TMDB_TV_PAGES", 2), mock.patch.object(config, "BRONZE_ROOT", ADLS), \
                 mock.patch.object(tmdb, "session", return_value=sess), \
                 mock.patch.object(tmdb.time, "sleep") as sleep, mock.patch("common.storage.put_jsonl", return_value=6):
             tmdb.run("2026-11-24", "B1")
-        # genre list, 3 pages of the lists, 2 of the new movies, 1 of trending
-        self.assertEqual(len(sess.calls), 1 + 2 * 3 + 2 * 2 + 1)
+        # 2 genre lists, 3 pages of the lists, 2 of the new movies, 1 of trending, 2 of TV shows
+        self.assertEqual(len(sess.calls), 2 + 2 * 3 + 2 * 2 + 1 + 2)
         self.assertEqual([c.args for c in sleep.call_args_list], [(0.25,)] * len(sess.calls))
         self.assertLessEqual(1 / tmdb.PAUSE_S, 4)
 
