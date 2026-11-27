@@ -35,6 +35,7 @@ DAG = {
     "gold_bridge_media_genre": {"silver_movie_genre", "silver_release_group_genre"},
     "gold_fact_media_metric_daily": {"silver_movie_metric_daily", "silver_release_group_metric_daily",
                                      "gold_dim_media"},  # reads gold.dim_media
+    "gold_fact_media_change": {"silver_movie", "silver_release_group"},  # the SCD2 versions
     "ops_pipeline_record_metrics": {"silver_movie", "silver_release_group_metric_daily"},  # reads silver.load_log
     "ops_data_quality_results": {"ops_pipeline_record_metrics"},
     "marts_views": {"setup_tables"},  # views need the tables, not their data

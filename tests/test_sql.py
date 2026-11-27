@@ -402,6 +402,13 @@ class GoldStatementTest(unittest.TestCase):
         self.assertIn("FOREIGN KEY (media_key) REFERENCES cat.gold.dim_media", fact)
         for dim in ("dim_date", "dim_media"):
             self.assertLess(sql.GOLD_TABLES.index(dim), sql.GOLD_TABLES.index("fact_media_metric_daily"))
+        change = create("gold", "fact_media_change")
+        self.assertEqual(columns("fact_media_change", "gold"), ["date_key", "media_key", "change_type", "changed_at"])
+        self.assertIn("PRIMARY KEY (media_key, changed_at)", change)
+        self.assertIn("FOREIGN KEY (date_key) REFERENCES cat.gold.dim_date", change)
+        self.assertIn("FOREIGN KEY (media_key) REFERENCES cat.gold.dim_media", change)
+        for dim in ("dim_date", "dim_media"):
+            self.assertLess(sql.GOLD_TABLES.index(dim), sql.GOLD_TABLES.index("fact_media_change"))
 
     def test_full_loads(self):
         for name in sql.GOLD_TABLES:
@@ -441,6 +448,17 @@ class GoldStatementTest(unittest.TestCase):
         self.assertIn("FROM cat.silver.release_group_genre", bridge)
         # one primary genre per media, the lowest position, as dim_media.primary_genre
         self.assertIn("row_number() OVER (PARTITION BY media_key ORDER BY position) = 1  AS is_primary", bridge)
+
+    def test_change_fact(self):
+        text = sql.render("gold/load", "fact_media_change", catalog="cat")
+        self.assertIn("FROM cat.silver.movie\n", text)  # every version, not only the current one
+        self.assertIn("FROM cat.silver.release_group\n", text)
+        self.assertNotIn("is_current", text)
+        # the same media_key as gold.dim_media
+        self.assertIn("concat('movie:', CAST(movie_id AS STRING)) AS media_key", text)
+        self.assertIn("concat('music:', release_group_id), valid_from", text)
+        self.assertIn("CASE WHEN row_number() OVER (PARTITION BY media_key ORDER BY valid_from) = 1 THEN 'new'", text)
+        self.assertIn("date_format(from_utc_timestamp(valid_from, 'Asia/Ho_Chi_Minh'), 'yyyyMMdd')", text)
 
     def test_fact(self):
         text = sql.render("gold/load", "fact_media_metric_daily", catalog="cat")
@@ -592,6 +610,10 @@ class MartsStatementTest(unittest.TestCase):
         "daily_listens": ["date", "albums_measured", "listens_gained", "total_listens"],
         "trending_7d": ["media_type", "rank", "title", "creator", "primary_genre", "listens_gained_7d",
                         "popularity_change_7d", "window_end"],
+        "new_releases": ["media_type", "release_status", "rank", "title", "creator", "primary_genre",
+                         "release_date", "days_from_release", "first_seen_date", "popularity", "listen_count",
+                         "snapshot_date"],
+        "catalog_changes": ["date", "media_type", "new_items", "changed_items"],
         "freshness": ["dataset", "last_batch_id", "last_dt", "last_ingested_at", "hours_since_ingest",
                       "last_silver_loaded_at", "silver_lag_s", "status"],
         "latest_quality_checks": ["dataset", "batch_id", "dt", "check_name", "severity", "value", "op", "threshold",
@@ -631,6 +653,17 @@ class MartsStatementTest(unittest.TestCase):
         self.assertIn("WHERE date > date_sub(latest_date, 7)", trending)  # the last 7 snapshot days
         self.assertIn("HAVING max(date) = max(latest_date)", trending)  # still in the latest snapshot
         self.assertIn("max_by(popularity, date) - min_by(popularity, date)", trending)
+
+    def test_new_releases_and_catalog_changes(self):
+        releases = view("new_releases")
+        self.assertIn("to_date(from_utc_timestamp(current_timestamp(), 'Asia/Ho_Chi_Minh')) AS d", releases)
+        self.assertIn("WHERE m.release_date BETWEEN date_sub(t.d, 30) AND date_add(t.d, 90)", releases)
+        self.assertIn("CASE WHEN m.release_date > t.d THEN 'upcoming' ELSE 'released' END", releases)
+        self.assertIn("WHERE c.change_type = 'new'", releases)  # first seen
+        self.assertIn("LEFT JOIN latest_metric AS l ON l.media_key = r.media_key AND l.rn = 1", releases)
+        changes = view("catalog_changes")
+        self.assertIn("count(DISTINCT CASE WHEN c.change_type = 'new' THEN c.media_key END)", changes)
+        self.assertIn("count(DISTINCT CASE WHEN c.change_type = 'changed' THEN c.media_key END)", changes)
 
     def test_operations_views(self):
         for name in ("freshness", "latest_quality_checks"):  # batch ids start with their time: greatest = latest
