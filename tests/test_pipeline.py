@@ -114,7 +114,8 @@ class IngestTest(unittest.TestCase):
         mods = {"ingest.tmdb": fake_module(run=tmdb_run or (lambda ds, batch_id: 5)),
                 "ingest.tmdb_file": fake_module(run=lambda ds, batch_id: 7),
                 "ingest.sample_movies": fake_module(run=lambda ds, batch_id: 74),
-                "ingest.musicbrainz": fake_module(run=lambda ds, batch_id: 9)}
+                "ingest.musicbrainz": fake_module(run=lambda ds, batch_id: 9),
+                "ingest.wikipedia": fake_module(run=lambda ds, batch_id: 11)}
         import ingest
         with mock.patch.dict(sys.modules, mods), mock.patch.object(config, "MOVIE_SOURCE", movie_source), \
                 mock.patch.multiple(ingest, create=True, **{k.split(".")[1]: v for k, v in mods.items()}):
@@ -122,6 +123,7 @@ class IngestTest(unittest.TestCase):
 
     def test_sources(self):
         self.assertEqual(self.ingest("musicbrainz"), 9)
+        self.assertEqual(self.ingest("wikipedia"), 11)
         self.assertEqual(self.ingest("tmdb"), 5)
         self.assertEqual(self.ingest("tmdb", movie_source="file"), 7)
         self.assertEqual(self.ingest("tmdb", movie_source="sample"), 74)

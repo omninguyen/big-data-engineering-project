@@ -1,7 +1,7 @@
 """Batch ingest: MusicBrainz release-groups (albums) per genre tag -> <BRONZE_ROOT>/musicbrainz/...
 For each genre (MB_GENRES): the albums that match it best (MB_PAGES_PER_GENRE pages of 100), and the albums released
 in the last MB_NEW_DAYS days (one page), so new music keeps coming in.
-Rate limit: 1 request/second (we sleep 1.1s). A contact in the User-Agent is required (MB_CONTACT).
+Rate limit: 1 request/second (we sleep 1.1s). A contact in the User-Agent is required (secret mb-contact).
 A failed search is logged and skipped. No album at all (network down, every request rejected) -> SourceError, so the
 task fails and is retried."""
 import logging
@@ -12,7 +12,7 @@ import requests
 
 from common import config, storage
 from common.errors import SourceError
-from common.http import session
+from common.http import contact_user_agent, session
 from ingest.batch import bronze_key
 
 log = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ def _search(sess, query: str, offset: int, label: str) -> list:
 
 
 def run(ds: str, batch_id: str) -> int:
-    sess = session(f"MediaPlatformThesis/1.0 ( {config.MB_CONTACT} )")
+    sess = session(contact_user_agent())
     now = datetime.now(timezone.utc).isoformat()
     since = (date.fromisoformat(ds) - timedelta(days=config.MB_NEW_DAYS)).isoformat()
     records = []

@@ -121,6 +121,7 @@ class MusicBrainzTest(unittest.TestCase):
         sess = sess or FakeSession(handler)
         with mock.patch.object(config, "MB_GENRES", ["jazz", "rock"]), mock.patch.object(config, "MB_PAGES_PER_GENRE", 1), \
                 mock.patch.object(config, "MB_NEW_DAYS", 30), mock.patch.object(config, "BRONZE_ROOT", ADLS), \
+                mock.patch.object(config, "MB_CONTACT", "team@example.org"), \
                 mock.patch.object(musicbrainz, "session", return_value=sess), \
                 mock.patch.object(musicbrainz.time, "sleep"), \
                 mock.patch("common.storage.put_jsonl", side_effect=lambda k, recs: len(list(recs))) as put:
@@ -156,6 +157,10 @@ class MusicBrainzTest(unittest.TestCase):
     def test_nothing_at_all_fails(self):
         with self.assertRaises(SourceError):
             self.run_with(lambda url, p: response(status=503))
+
+    def test_no_contact_fails_instead_of_sending_a_placeholder(self):
+        with mock.patch.object(config, "MB_CONTACT", ""), self.assertRaises(MissingCredentials):
+            musicbrainz.run("2026-11-24", "B1")
 
 
 if __name__ == "__main__":

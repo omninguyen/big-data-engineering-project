@@ -51,6 +51,7 @@ class ListenBrainzTest(unittest.TestCase):
         with mock.patch.object(listenbrainz, "album_ids", return_value=ids), \
                 mock.patch.object(listenbrainz, "session", return_value=sess), \
                 mock.patch.object(config, "LB_BATCH_SIZE", batch_size), \
+                mock.patch.object(config, "MB_CONTACT", "team@example.org"), \
                 mock.patch.object(config, "BRONZE_ROOT", ADLS), \
                 mock.patch.object(listenbrainz.time, "sleep") as sleep, \
                 mock.patch("common.storage.put_jsonl", side_effect=lambda k, recs: len(list(recs))) as put:
