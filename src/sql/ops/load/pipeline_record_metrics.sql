@@ -37,7 +37,7 @@ WITH bronze_rows AS (
   SELECT
     'wikidata_media_articles', 'media_wiki_page', batch_id, dt, _source_file, _file_size, _file_modified_at,
     _ingested_at,
-    CASE WHEN media_type IN ('movie', 'music') AND source_id <> '' AND article <> ''
+    CASE WHEN media_type IN ('movie', 'tv', 'music') AND source_id <> '' AND article <> ''
       THEN concat(media_type, ':', source_id) END
   FROM ${catalog}.bronze.wikidata_media_articles
   UNION ALL

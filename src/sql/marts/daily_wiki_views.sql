@@ -2,7 +2,7 @@
 -- pipeline.py marts.
 CREATE OR REPLACE VIEW ${catalog}.marts.daily_wiki_views (
   date        COMMENT 'day of the views (UTC day, as Wikimedia counts them)',
-  media_type  COMMENT 'movie | music',
+  media_type  COMMENT 'movie | tv | music',
   items       COMMENT 'movies or albums whose article had views that day',
   views       COMMENT 'Wikipedia views of their articles that day'
 )

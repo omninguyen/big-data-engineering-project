@@ -123,6 +123,11 @@ class WikipediaTest(unittest.TestCase):
             self.run_with({"movie": ["1"], "music": []}, sess)
         self.assertEqual(ctx.exception.status, 403)
 
+    def test_each_media_type_has_its_wikidata_property(self):
+        self.assertEqual(wikipedia.PROPERTY, {"movie": "P4947", "tv": "P4983", "music": "P436"})
+        self.assertIn("?item wdt:P4983 ?id", wikipedia.sparql_query("tv", ["1399"]))  # TMDB TV series id
+        self.assertTrue(wikipedia.VALID_ID["tv"].fullmatch("1399"))
+
     def test_sparql_is_retried_after_a_429_or_5xx(self):
         sess = FakeSession([response(status=429, headers={"Retry-After": "7"}), bindings(("1", "Q1", "A"))])
         with self.assertLogs("ingest.wikipedia", "WARNING"):

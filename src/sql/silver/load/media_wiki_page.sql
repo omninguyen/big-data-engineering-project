@@ -11,7 +11,7 @@ USING (
     min_by(url, article)          AS url,
     max(batch_id)                 AS batch_id
   FROM ${catalog}.bronze.wikidata_media_articles
-  WHERE batch_id = '${batch_id}' AND media_type IN ('movie', 'music') AND source_id <> '' AND article <> ''
+  WHERE batch_id = '${batch_id}' AND media_type IN ('movie', 'tv', 'music') AND source_id <> '' AND article <> ''
   GROUP BY media_type, source_id
 ) AS s
 ON t.media_type = s.media_type AND t.source_id = s.source_id

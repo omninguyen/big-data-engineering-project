@@ -32,7 +32,7 @@ DAG = {
     "silver_release_group_genre": {"silver_release_group", "silver_genre"},
     "silver_release_group_artist": {"silver_release_group", "silver_artist"},
     "ingest_listenbrainz": {"silver_release_group"},  # looks up the albums known to silver
-    "ingest_wikipedia": {"silver_movie", "silver_release_group"},  # looks up the movies and albums known to silver
+    "ingest_wikipedia": {"silver_movie", "silver_tv_show", "silver_release_group"},  # looks up the media in silver
     "bronze_wikidata_media_articles": {"ingest_wikipedia", "setup_tables"},
     "bronze_wikipedia_pageviews": {"ingest_wikipedia", "setup_tables"},
     "silver_media_wiki_page": {"bronze_wikidata_media_articles"},

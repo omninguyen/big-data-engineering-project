@@ -95,6 +95,7 @@ resources:
           depends_on:
             - task_key: silver_movie
             - task_key: silver_release_group
+            - task_key: silver_tv_show
           environment_key: default
           max_retries: 2
           min_retry_interval_millis: 300000

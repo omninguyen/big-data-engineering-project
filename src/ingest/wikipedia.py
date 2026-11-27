@@ -1,7 +1,7 @@
-"""Batch ingest: Wikipedia pageviews of the movies and albums known to silver, in two steps.
+"""Batch ingest: Wikipedia pageviews of the movies, TV shows and albums known to silver, in two steps.
 
-1. Wikidata SPARQL maps the ids to Wikipedia articles: TMDB movie id (property P4947) and MusicBrainz release group
-   id (P436) -> the article about the same item on WIKI_PROJECT (en.wikipedia). Ids go WIKI_SPARQL_BATCH at a time.
+1. Wikidata SPARQL maps the ids to Wikipedia articles: TMDB movie id (property P4947), TMDB TV series id (P4983)
+   and MusicBrainz release group id (P436) -> the article about the same item on WIKI_PROJECT (en.wikipedia). Ids go WIKI_SPARQL_BATCH at a time.
    -> <BRONZE_ROOT>/wikidata/media_articles/dt=<ds>/batch_id=<batch id>/media_articles.jsonl
 2. The Wikimedia pageviews API gives the daily views of every mapped article, by people only (agent=user), for the
    last WIKI_DAYS days up to the day before the batch day. One request covers all the days, so every run fetches the
@@ -32,20 +32,22 @@ SPARQL_PAUSE_S = 1.0  # after every SPARQL query
 PAUSE_S = 0.1  # after every pageviews request: at most 10 requests/s
 MAX_ATTEMPTS = 4
 RETRY = {429, 500, 502, 503, 504}
-PROPERTY = {"movie": "P4947", "music": "P436"}  # Wikidata property holding the TMDB id / MusicBrainz id
-VALID_ID = {"movie": re.compile(r"[0-9]+"),
+PROPERTY = {"movie": "P4947", "tv": "P4983", "music": "P436"}  # Wikidata property holding the TMDB / MusicBrainz id
+VALID_ID = {"movie": re.compile(r"[0-9]+"), "tv": re.compile(r"[0-9]+"),
             "music": re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")}
 
 
 def media_ids() -> dict:
-    """Ids of the current movies and albums in silver (the task runs after silver_movie and silver_release_group)."""
+    """Ids of the current movies, TV shows and albums in silver (the task runs after their silver tasks)."""
     from pyspark.sql import SparkSession  # preinstalled on Databricks
     spark = SparkSession.builder.getOrCreate()
     catalog = config.UC_CATALOG
     movies = spark.sql(f"SELECT movie_id FROM {catalog}.silver.movie WHERE is_current ORDER BY movie_id").collect()
     albums = spark.sql(f"SELECT release_group_id FROM {catalog}.silver.release_group "
                        "WHERE is_current ORDER BY release_group_id").collect()
-    return {"movie": [str(r["movie_id"]) for r in movies], "music": [r["release_group_id"] for r in albums]}
+    shows = spark.sql(f"SELECT tv_id FROM {catalog}.silver.tv_show WHERE is_current ORDER BY tv_id").collect()
+    return {"movie": [str(r["movie_id"]) for r in movies], "tv": [str(r["tv_id"]) for r in shows],
+            "music": [r["release_group_id"] for r in albums]}
 
 
 def sparql_query(media_type: str, ids: list) -> str:

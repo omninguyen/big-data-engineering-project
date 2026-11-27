@@ -637,7 +637,7 @@ class OpsStatementTest(unittest.TestCase):
             "release_group_metric_daily",
             "release_group_mbid <> '' AND total_listen_count IS NOT NULL AND dt IS NOT NULL"),
         "wikidata_media_articles": (
-            "media_wiki_page", "media_type IN ('movie', 'music') AND source_id <> '' AND article <> ''"),
+            "media_wiki_page", "media_type IN ('movie', 'tv', 'music') AND source_id <> '' AND article <> ''"),
         "wikipedia_pageviews": (
             "wiki_pageview_daily", "article <> '' AND views IS NOT NULL AND view_date IS NOT NULL"),
     }
@@ -828,7 +828,7 @@ class MartsStatementTest(unittest.TestCase):
         self.assertIn("count(*) AS items, sum(f.views) AS views", view("daily_wiki_views"))
         coverage = view("wiki_coverage")
         self.assertIn("FROM cat.gold.dim_media AS m", coverage)  # every media, with an article or not
-        self.assertIn("WHERE m.media_type IN ('movie', 'music')", coverage)  # TV shows are not looked up on Wikidata
+        self.assertNotIn("WHERE", coverage)  # every media type is looked up on Wikidata
         self.assertIn("LEFT JOIN cat.gold.dim_wiki_page AS p ON p.media_key = m.media_key", coverage)
         self.assertIn("try_divide(count(p.media_key), count(*))", coverage)
 

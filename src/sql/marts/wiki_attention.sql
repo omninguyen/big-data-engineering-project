@@ -2,7 +2,7 @@
 -- next to their TMDB popularity or ListenBrainz listens: three views of public interest.
 -- Created or replaced by: pipeline.py marts.
 CREATE OR REPLACE VIEW ${catalog}.marts.wiki_attention (
-  media_type         COMMENT 'movie | music',
+  media_type         COMMENT 'movie | tv | music',
   rank               COMMENT '1 = most viewed article over the last 7 days; filter rank <= 10',
   title              COMMENT 'title',
   creator            COMMENT 'artist credit (music)',
