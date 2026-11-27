@@ -20,7 +20,7 @@ import requests
 
 from common import config, storage
 from common.errors import SourceError
-from common.http import session
+from common.http import contact_user_agent, session
 from ingest.batch import bronze_key
 
 log = logging.getLogger(__name__)
@@ -82,7 +82,7 @@ def run(ds: str, batch_id: str) -> int:
     ids = [i for i in album_ids() if MBID.fullmatch(i or "")]  # anything else would make the request fail (400)
     if not ids:
         raise SourceError("listenbrainz", "no album in silver.release_group to look up")
-    sess = session(f"MediaPlatformThesis/1.0 ( {config.MB_CONTACT} )")
+    sess = session(contact_user_agent())
     now = datetime.now(timezone.utc).isoformat()
     records = []
     for start in range(0, len(ids), config.LB_BATCH_SIZE):

@@ -91,6 +91,17 @@ resources:
           spark_python_task:
             python_file: ./src/pipeline.py
             parameters: ["--set", "BRONZE_ROOT=${var.bronze_root}", "ingest", "--source", "listenbrainz"]
+        - task_key: ingest_wikipedia   # Wikipedia articles (Wikidata) and pageviews of the movies and albums in silver
+          depends_on:
+            - task_key: silver_movie
+            - task_key: silver_release_group
+          environment_key: default
+          max_retries: 2
+          min_retry_interval_millis: 300000
+          timeout_seconds: 3600   # one pageviews request per article, about 10 per second
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["--set", "BRONZE_ROOT=${var.bronze_root}", "ingest", "--source", "wikipedia"]
         - task_key: bronze_tmdb_movies   # COPY INTO from landing/
           depends_on:
             - task_key: ingest_tmdb
