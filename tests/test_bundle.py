@@ -41,6 +41,8 @@ DAG = {
     "gold_fact_media_metric_daily": {"silver_movie_metric_daily", "silver_release_group_metric_daily",
                                      "gold_dim_media"},  # reads gold.dim_media
     "gold_fact_media_change": {"silver_movie", "silver_release_group"},  # the SCD2 versions
+    "gold_dim_wiki_page": {"silver_media_wiki_page", "gold_dim_media"},  # keeps media of dim_media only
+    "gold_fact_wiki_pageview_daily": {"silver_wiki_pageview_daily", "gold_dim_wiki_page"},  # media of an article
     "ops_pipeline_record_metrics": {"silver_movie", "silver_release_group_metric_daily",  # reads silver.load_log
                                     "silver_media_wiki_page", "silver_wiki_pageview_daily"},
     "ops_data_quality_results": {"ops_pipeline_record_metrics"},

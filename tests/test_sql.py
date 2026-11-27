@@ -436,6 +436,18 @@ class GoldStatementTest(unittest.TestCase):
         self.assertIn("FOREIGN KEY (media_key) REFERENCES cat.gold.dim_media", change)
         for dim in ("dim_date", "dim_media"):
             self.assertLess(sql.GOLD_TABLES.index(dim), sql.GOLD_TABLES.index("fact_media_change"))
+        page = create("gold", "dim_wiki_page")
+        self.assertEqual(columns("dim_wiki_page", "gold"), ["media_key", "article", "wikidata_id", "url"])
+        self.assertIn("PRIMARY KEY (media_key)", page)
+        self.assertIn("FOREIGN KEY (media_key) REFERENCES cat.gold.dim_media", page)
+        self.assertLess(sql.GOLD_TABLES.index("dim_media"), sql.GOLD_TABLES.index("dim_wiki_page"))
+        views = create("gold", "fact_wiki_pageview_daily")
+        self.assertEqual(columns("fact_wiki_pageview_daily", "gold"), ["date_key", "media_key", "views"])
+        self.assertIn("PRIMARY KEY (date_key, media_key)", views)
+        self.assertIn("FOREIGN KEY (date_key) REFERENCES cat.gold.dim_date", views)
+        self.assertIn("FOREIGN KEY (media_key) REFERENCES cat.gold.dim_media", views)
+        for table in ("dim_date", "dim_media", "dim_wiki_page"):  # its load reads dim_wiki_page
+            self.assertLess(sql.GOLD_TABLES.index(table), sql.GOLD_TABLES.index("fact_wiki_pageview_daily"))
 
     def test_full_loads(self):
         for name in sql.GOLD_TABLES:
@@ -499,6 +511,18 @@ class GoldStatementTest(unittest.TestCase):
         # listens of the day from the all-time totals
         self.assertIn("listen_count - lag(listen_count) OVER (PARTITION BY release_group_id ORDER BY snapshot_date)",
                       text)
+
+
+    def test_wikipedia(self):
+        page = sql.render("gold/load", "dim_wiki_page", catalog="cat")
+        self.assertIn("FROM cat.silver.media_wiki_page", page)
+        # the same media_key as gold.dim_media: movie:<TMDB id>, music:<MusicBrainz id>
+        self.assertIn("concat(media_type, ':', source_id) AS media_key", page)
+        self.assertIn("WHERE media_key IN (SELECT media_key FROM cat.gold.dim_media)", page)  # every row has its dim
+        views = sql.render("gold/load", "fact_wiki_pageview_daily", catalog="cat")
+        self.assertIn("FROM cat.silver.wiki_pageview_daily AS v", views)
+        self.assertIn("JOIN cat.gold.dim_wiki_page AS p ON p.article = v.article", views)  # media of dim_media only
+        self.assertIn("CAST(date_format(v.view_date, 'yyyyMMdd') AS INT)  AS date_key", views)
 
 
 class GoldTest(unittest.TestCase):
@@ -645,6 +669,10 @@ class MartsStatementTest(unittest.TestCase):
                          "release_date", "days_from_release", "first_seen_date", "popularity", "listen_count",
                          "snapshot_date"],
         "catalog_changes": ["date", "media_type", "new_items", "changed_items"],
+        "wiki_attention": ["media_type", "rank", "title", "creator", "primary_genre", "article", "url", "views_7d",
+                           "views_prev_7d", "views_change_pct", "popularity", "listen_count", "window_end"],
+        "daily_wiki_views": ["date", "media_type", "items", "views"],
+        "wiki_coverage": ["media_type", "items", "items_with_article", "coverage_pct"],
         "freshness": ["dataset", "last_batch_id", "last_dt", "last_ingested_at", "hours_since_ingest",
                       "last_silver_loaded_at", "silver_lag_s", "status"],
         "latest_quality_checks": ["dataset", "batch_id", "dt", "check_name", "severity", "value", "op", "threshold",
@@ -695,6 +723,22 @@ class MartsStatementTest(unittest.TestCase):
         changes = view("catalog_changes")
         self.assertIn("count(DISTINCT CASE WHEN c.change_type = 'new' THEN c.media_key END)", changes)
         self.assertIn("count(DISTINCT CASE WHEN c.change_type = 'changed' THEN c.media_key END)", changes)
+
+    def test_wikipedia_views(self):
+        attention = view("wiki_attention")
+        self.assertIn("CAST(row_number() OVER (PARTITION BY m.media_type ORDER BY w.views_7d DESC, m.title) AS INT)",
+                      attention)
+        self.assertIn("max(d.date) OVER () AS latest_date", attention)  # the latest day with views
+        self.assertIn("sum(CASE WHEN date > date_sub(latest_date, 7) THEN views ELSE 0 END)", attention)
+        self.assertIn("sum(CASE WHEN date <= date_sub(latest_date, 7) THEN views ELSE 0 END)", attention)
+        self.assertIn("WHERE date > date_sub(latest_date, 14)", attention)  # this week and the one before
+        self.assertIn("try_divide(w.views_7d - w.views_prev_7d, w.views_prev_7d)", attention)  # NULL, not an error
+        self.assertIn("LEFT JOIN latest_metric AS l ON l.media_key = w.media_key AND l.rn = 1", attention)
+        self.assertIn("count(*) AS items, sum(f.views) AS views", view("daily_wiki_views"))
+        coverage = view("wiki_coverage")
+        self.assertIn("FROM cat.gold.dim_media AS m", coverage)  # every media, with an article or not
+        self.assertIn("LEFT JOIN cat.gold.dim_wiki_page AS p ON p.media_key = m.media_key", coverage)
+        self.assertIn("try_divide(count(p.media_key), count(*))", coverage)
 
     def test_operations_views(self):
         for name in ("freshness", "latest_quality_checks"):  # batch ids start with their time: greatest = latest

@@ -337,6 +337,28 @@ resources:
           spark_python_task:
             python_file: ./src/pipeline.py
             parameters: ["gold", "--table", "fact_media_change"]
+        - task_key: gold_dim_wiki_page   # full load: the Wikipedia article of each movie and album
+          depends_on:
+            - task_key: silver_media_wiki_page
+            - task_key: gold_dim_media
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 900
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["gold", "--table", "dim_wiki_page"]
+        - task_key: gold_fact_wiki_pageview_daily   # full load: daily Wikipedia views of movies and albums
+          depends_on:
+            - task_key: silver_wiki_pageview_daily
+            - task_key: gold_dim_wiki_page
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 1800
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["gold", "--table", "fact_wiki_pageview_daily"]
         - task_key: ops_pipeline_record_metrics   # full load: rows, files and lag of every ingest batch
           depends_on:
             - task_key: silver_movie                        # TMDB
