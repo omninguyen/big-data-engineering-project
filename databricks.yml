@@ -35,6 +35,12 @@ resources:
     ingest:   # keep this key: renaming it would delete the job and create a new one (new id, no run history)
       name: media-platform-pipeline-daily   # the name can change freely: same job, id and run history
       max_concurrent_runs: 1
+      # Every change goes through a pull request and CD (cd.yml): the team views and runs the job, nobody edits or
+      # deletes it by hand. Each deploy sets these permissions again (the deploying service principal stays owner;
+      # workspace admins keep their access), so permissions added by hand in the UI are removed.
+      permissions:
+        - level: CAN_MANAGE_RUN   # view, run now, cancel, repair; not edit or delete
+          group_name: media-platform-team   # workspace group: Admin settings -> Identity and access -> Groups
       schedule:
         quartz_cron_expression: "0 0 2 * * ?"   # every day at 02:00
         timezone_id: Asia/Ho_Chi_Minh   # also the timezone of dt and the batch id (src/ingest/batch.py)

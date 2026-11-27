@@ -110,6 +110,10 @@ class BundleTest(unittest.TestCase):
                 self.assertEqual(dict(args.settings), {"BRONZE_ROOT": "${var.bronze_root}"})
         self.assertTrue(os.path.isfile(os.path.join(ROOT, "src", "pipeline.py")))
 
+    def test_team_can_view_and_run_the_job_but_not_edit_it(self):
+        self.assertEqual(self.job["permissions"], [{"level": "CAN_MANAGE_RUN", "group_name": "media-platform-team"}])
+        self.assertNotIn("permissions", self.bundle)  # nothing granted on every resource of the bundle at once
+
     def test_job_name(self):
         self.assertEqual(self.job["name"], "media-platform-pipeline-daily")
 
