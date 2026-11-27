@@ -5,9 +5,9 @@
 CREATE TABLE IF NOT EXISTS ${catalog}.gold.fact_media_metric_daily (
   date_key             INT     NOT NULL COMMENT 'snapshot day, yyyymmdd (gold.dim_date)',
   media_key            STRING  NOT NULL COMMENT 'gold.dim_media',
-  popularity           DOUBLE           COMMENT 'TMDB popularity score of that day (movies)',
-  rating               DOUBLE           COMMENT 'TMDB vote average 0-10 (movies)',
-  votes                INT              COMMENT 'TMDB vote count, all-time total (movies)',
+  popularity           DOUBLE           COMMENT 'TMDB popularity score of that day (movies, TV shows)',
+  rating               DOUBLE           COMMENT 'TMDB vote average 0-10 (movies, TV shows)',
+  votes                INT              COMMENT 'TMDB vote count, all-time total (movies, TV shows)',
   listen_count         BIGINT           COMMENT 'ListenBrainz listens, all-time total (music)',
   listener_count       BIGINT           COMMENT 'ListenBrainz listeners, all-time total (music)',
   listen_count_change  BIGINT           COMMENT 'listens since the previous snapshot of the album, NULL on the first',
@@ -17,4 +17,4 @@ CREATE TABLE IF NOT EXISTS ${catalog}.gold.fact_media_metric_daily (
 )
 USING DELTA
 LOCATION '${gold_root}/fact_media_metric_daily'
-COMMENT 'Daily metrics of movies (TMDB) and albums (ListenBrainz), full load';
+COMMENT 'Daily metrics of movies and TV shows (TMDB) and albums (ListenBrainz), full load';

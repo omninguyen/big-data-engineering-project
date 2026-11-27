@@ -1,7 +1,7 @@
 -- Mart view for the dashboard (Preset): size of the catalog per media type. Created or replaced by: pipeline.py marts.
 CREATE OR REPLACE VIEW ${catalog}.marts.catalog_items (
-  media_type          COMMENT 'movie | music',
-  items               COMMENT 'movies or albums in the catalog',
+  media_type          COMMENT 'movie | tv | music',
+  items               COMMENT 'movies, TV shows or albums in the catalog',
   items_with_genre    COMMENT 'of them, with at least one genre',
   genres              COMMENT 'genres of this media type',
   first_release_year  COMMENT 'oldest release year',

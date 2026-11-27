@@ -1,12 +1,12 @@
--- Mart view for the dashboard (Preset): how many movies and albums came in or changed each day.
+-- Mart view for the dashboard (Preset): how many movies, TV shows and albums came in or changed each day.
 -- Created or replaced by: pipeline.py marts.
 CREATE OR REPLACE VIEW ${catalog}.marts.catalog_changes (
   date           COMMENT 'day of the changes (Vietnam time)',
-  media_type     COMMENT 'movie | music',
-  new_items      COMMENT 'movies or albums seen for the first time that day (the first run counts the whole catalog)',
-  changed_items  COMMENT 'movies or albums whose details changed that day (a new SCD2 version in silver)'
+  media_type     COMMENT 'movie | tv | music',
+  new_items      COMMENT 'media seen for the first time that day (the first run of a source counts its whole catalog)',
+  changed_items  COMMENT 'media whose details changed that day (a new SCD2 version in silver)'
 )
-COMMENT 'New and changed movies and albums per day (gold.fact_media_change)'
+COMMENT 'New and changed movies, TV shows and albums per day (gold.fact_media_change)'
 AS
 SELECT
   d.date,
