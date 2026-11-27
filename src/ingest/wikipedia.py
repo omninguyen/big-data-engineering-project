@@ -1,7 +1,8 @@
 """Batch ingest: Wikipedia pageviews of the movies, TV shows and albums known to silver, in two steps.
 
 1. Wikidata SPARQL maps the ids to Wikipedia articles: TMDB movie id (property P4947), TMDB TV series id (P4983)
-   and MusicBrainz release group id (P436) -> the article about the same item on WIKI_PROJECT (en.wikipedia). Ids go WIKI_SPARQL_BATCH at a time.
+   and MusicBrainz release group id (P436) -> the article about the same item on WIKI_PROJECT (en.wikipedia).
+   Ids go WIKI_SPARQL_BATCH at a time.
    -> <BRONZE_ROOT>/wikidata/media_articles/dt=<ds>/batch_id=<batch id>/media_articles.jsonl
 2. The Wikimedia pageviews API gives the daily views of every mapped article, by people only (agent=user), for the
    last WIKI_DAYS days up to the day before the batch day. One request covers all the days, so every run fetches the
