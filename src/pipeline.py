@@ -7,6 +7,7 @@ then the bronze, silver and gold tables in Unity Catalog, and the ops tables tha
   python pipeline.py [--set KEY=VALUE ...] silver [--table <silver table>]
   python pipeline.py [--set KEY=VALUE ...] gold [--table <gold table>]
   python pipeline.py [--set KEY=VALUE ...] ops [--table <ops table>]
+  python pipeline.py [--set KEY=VALUE ...] marts
 
 ingest     TMDB movies -> <bronze>/tmdb/movies/dt=<date>/batch_id=<batch id>/, MusicBrainz albums ->
            <bronze>/musicbrainz/release_groups/dt=<date>/batch_id=<batch id>/, ListenBrainz listen counts of the
@@ -21,6 +22,7 @@ silver     loads a silver table (src/sql/silver/load/): every new bronze batch, 
            table; a rebuild for a full-load table.
 gold       rebuilds a gold table from silver (src/sql/gold/load/), on every run.
 ops        rebuilds an ops table (src/sql/ops/load/): rows, files, lag and quality checks of every ingest batch.
+marts      creates or replaces the views of the marts schema (src/sql/marts/), read by the dashboard (Preset).
            Without --table, each command loads every table of its layer. The job runs one task per table
            (databricks.yml), so the data path is visible in the job graph.
 --set      settings of src/common/config.py, applied before it is imported. Serverless job tasks have no cluster
@@ -125,7 +127,13 @@ def ops(args) -> dict:
     return sql.load_ops_table(spark, args.table) if args.table else sql.load_ops_tables(spark)
 
 
-TASKS = {"ingest": ingest, "setup": setup, "bronze": bronze, "silver": silver, "gold": gold, "ops": ops}
+def marts(args) -> list:
+    import sql
+    return sql.create_marts_views(_spark())
+
+
+TASKS = {"ingest": ingest, "setup": setup, "bronze": bronze, "silver": silver, "gold": gold, "ops": ops,
+         "marts": marts}
 
 
 def parser() -> argparse.ArgumentParser:
@@ -146,6 +154,7 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--table", choices=sql.GOLD_TABLES)
     s = sub.add_parser("ops", help="rebuild an ops table: pipeline metrics and data quality (default: all)")
     s.add_argument("--table", choices=sql.OPS_TABLES)
+    sub.add_parser("marts", help="create or replace the views of the marts schema, read by the dashboard")
     return p
 
 

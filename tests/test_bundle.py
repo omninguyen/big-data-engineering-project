@@ -37,6 +37,7 @@ DAG = {
                                      "gold_dim_media"},  # reads gold.dim_media
     "ops_pipeline_record_metrics": {"silver_movie", "silver_release_group_metric_daily"},  # reads silver.load_log
     "ops_data_quality_results": {"ops_pipeline_record_metrics"},
+    "marts_views": {"setup_tables"},  # views need the tables, not their data
 }
 # Tasks that also run when a task they wait for failed (the others run only when all of them succeeded).
 RUN_IF = {"ops_pipeline_record_metrics": "ALL_DONE"}  # monitors the batches of a failed path too
@@ -112,12 +113,19 @@ class BundleTest(unittest.TestCase):
     def test_job_name(self):
         self.assertEqual(self.job["name"], "media-platform-pipeline-daily")
 
-    def test_daily_at_two_vietnam_time_paused_unless_switched_on(self):
+    def test_daily_at_two_vietnam_time_on_unless_switched_off(self):
         schedule = self.job["schedule"]
         self.assertEqual(schedule["quartz_cron_expression"], "0 0 2 * * ?")
         self.assertEqual(schedule["timezone_id"], "Asia/Ho_Chi_Minh")
         self.assertEqual(schedule["pause_status"], "${var.schedule_status}")
-        self.assertEqual(self.bundle["variables"]["schedule_status"]["default"], "PAUSED")
+        self.assertEqual(self.bundle["variables"]["schedule_status"]["default"], "UNPAUSED")
+        with open(os.path.join(ROOT, ".github", "workflows", "cd.yml"), encoding="utf-8") as f:
+            self.assertIn("BUNDLE_VAR_schedule_status: ${{ vars.INGEST_SCHEDULE || 'UNPAUSED' }}", f.read())
+
+    def test_marts_task(self):
+        tasks, _ = self.tasks_and_environments()
+        self.assertEqual(pipeline.parser().parse_args(tasks["marts_views"]["spark_python_task"]["parameters"]).task,
+                         "marts")
 
     def test_no_workspace_or_storage_details_in_the_file(self):
         text = re.sub(r"abfss://\w+@<account>\.dfs\.core\.windows\.net", "", self.text)  # placeholders in descriptions

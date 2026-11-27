@@ -1,4 +1,4 @@
-"""src/sql: the bronze, silver, gold and ops statements, and the runner with a fake Spark session."""
+"""src/sql: the bronze, silver, gold and ops statements, the marts views, and the runner with a fake Spark session."""
 import os
 import re
 import sys
@@ -568,6 +568,72 @@ class OpsTest(unittest.TestCase):
         spark = FakeSpark({"cat.ops.pipeline_record_metrics": "abfss://uc@acct.dfs.core.windows.net/__unitystorage/1"})
         with self.assertRaisesRegex(RuntimeError, "drop it"):
             self.run_ops(spark)
+
+
+def view(name: str) -> str:
+    return sql.render("marts", name, catalog="cat")
+
+
+def view_columns(name: str) -> list:
+    """Columns of the view, from its column list."""
+    found = re.search(rf"VIEW cat\.marts\.{name} \((.*?)\n\)\nCOMMENT", view(name), re.S)
+    return re.findall(r"^\s+(\w+)\s+COMMENT", found.group(1), re.M)
+
+
+class MartsStatementTest(unittest.TestCase):
+    COLUMNS = {
+        "catalog_items": ["media_type", "items", "items_with_genre", "genres", "first_release_year",
+                          "last_release_year"],
+        "items_per_genre": ["media_type", "genre_name", "items", "primary_items"],
+        "items_per_release_year": ["media_type", "release_year", "release_decade", "items"],
+        "movies_by_language": ["language", "movies", "rank"],
+        "top_titles": ["media_type", "rank", "title", "creator", "primary_genre", "release_year", "popularity",
+                       "rating", "votes", "listen_count", "listener_count", "snapshot_date"],
+        "daily_listens": ["date", "albums_measured", "listens_gained", "total_listens"],
+        "trending_7d": ["media_type", "rank", "title", "creator", "primary_genre", "listens_gained_7d",
+                        "popularity_change_7d", "window_end"],
+    }
+
+    def test_one_view_per_file_over_gold_and_ops_only(self):
+        files = [f[:-len(".sql")] for f in os.listdir(os.path.join(sql.HERE, "marts")) if f.endswith(".sql")]
+        self.assertEqual(sorted(files), sorted(sql.MARTS_VIEWS))
+        for name in sql.MARTS_VIEWS:
+            with self.subTest(view=name):
+                text = view(name)
+                self.assertNotIn("$", text)
+                self.assertEqual(len(sql.statements(text)), 1)
+                self.assertIn(f"CREATE OR REPLACE VIEW cat.marts.{name} (", text)
+                self.assertNotRegex(text, r"cat\.(bronze|silver)\.")  # the dashboard reads the modelled layers only
+                self.assertNotIn("ARRAY", text.upper().replace("ARRAY_", ""))  # flat columns for Superset
+
+    def test_agreed_columns(self):
+        self.assertEqual(set(self.COLUMNS), set(sql.MARTS_VIEWS))
+        for name, expected in self.COLUMNS.items():
+            with self.subTest(view=name):
+                self.assertEqual(view_columns(name), expected)
+
+    def test_rankings_and_trends(self):
+        for name in ("movies_by_language", "top_titles", "trending_7d"):  # a top 10 is a filter rank <= 10
+            self.assertIn("CAST(row_number() OVER (", view(name))
+        top = view("top_titles")
+        self.assertIn("max(d.date) OVER (PARTITION BY m.media_type)  AS latest_date", top)
+        self.assertIn("WHERE snapshot_date = latest_date", top)  # the latest snapshot of each media type
+        self.assertIn("CASE WHEN media_type = 'movie' THEN popularity ELSE listen_count END DESC NULLS LAST", top)
+        self.assertIn("sum(f.listen_count_change)  AS listens_gained", view("daily_listens"))
+        trending = view("trending_7d")
+        self.assertIn("WHERE date > date_sub(latest_date, 7)", trending)  # the last 7 snapshot days
+        self.assertIn("HAVING max(date) = max(latest_date)", trending)  # still in the latest snapshot
+        self.assertIn("max_by(popularity, date) - min_by(popularity, date)", trending)
+
+
+class MartsTest(unittest.TestCase):
+    def test_creates_or_replaces_every_view(self):
+        spark = FakeSpark()
+        with mock.patch.object(config, "UC_CATALOG", "cat"), self.assertLogs("sql", "INFO"):
+            views = sql.create_marts_views(spark)
+        self.assertEqual(views, [f"cat.marts.{name}" for name in sql.MARTS_VIEWS])
+        self.assertEqual([re.search(r"VIEW cat\.marts\.(\w+)", s).group(1) for s in spark.statements],
+                         sql.MARTS_VIEWS)
 
 
 class OneTableTest(unittest.TestCase):
