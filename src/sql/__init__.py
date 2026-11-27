@@ -37,10 +37,11 @@ SILVER_INCREMENTAL = {  # silver table: its bronze table
 SILVER_FULL = ["genre", "movie_genre", "release_group_genre", "release_group_artist"]
 SILVER_LOADED = [*SILVER_INCREMENTAL, *SILVER_FULL]  # every silver table with a load (load_log is written by them)
 GOLD_TABLES = ["dim_date", "dim_media", "dim_genre", "bridge_media_genre",  # full loads; dims before their foreign keys
-               "fact_media_metric_daily", "fact_media_change"]
+               "fact_media_metric_daily", "fact_media_change", "dim_wiki_page", "fact_wiki_pageview_daily"]
 OPS_TABLES = ["pipeline_record_metrics", "data_quality_results"]  # full loads; data_quality_results reads the first
 MARTS_VIEWS = ["catalog_items", "items_per_genre", "items_per_release_year", "movies_by_language", "top_titles",
-               "daily_listens", "trending_7d", "new_releases", "catalog_changes",  # content, over gold
+               "daily_listens", "trending_7d", "new_releases", "catalog_changes",
+               "wiki_attention", "daily_wiki_views", "wiki_coverage",  # content, over gold
                "freshness", "latest_quality_checks", "quality_history", "data_catalog"]  # operations, over ops
 BATCH_ID = re.compile(r"[0-9A-Za-z-]+")
 
