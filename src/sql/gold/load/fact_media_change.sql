@@ -1,9 +1,13 @@
 -- Full load of gold.fact_media_change (pipeline.py gold): rebuilt on every run, in one write (INSERT OVERWRITE), from
--- every version in silver.movie and silver.release_group. media_key is built as in gold/load/dim_media.sql. The day
--- is the Vietnam date of valid_from, as dt and the batch id. The first run counts the whole catalog as new.
+-- every version in silver.movie, tv_show and release_group. media_key is built as in gold/load/dim_media.sql. The day
+-- is the Vietnam date of valid_from, as dt and the batch id. The first run of a source counts its whole catalog as
+-- new.
 WITH versions AS (
   SELECT concat('movie:', CAST(movie_id AS STRING)) AS media_key, valid_from
   FROM ${catalog}.silver.movie
+  UNION ALL
+  SELECT concat('tv:', CAST(tv_id AS STRING)), valid_from
+  FROM ${catalog}.silver.tv_show
   UNION ALL
   SELECT concat('music:', release_group_id), valid_from
   FROM ${catalog}.silver.release_group

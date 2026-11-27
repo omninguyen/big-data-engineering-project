@@ -1,5 +1,5 @@
 -- Full load of gold.dim_media (pipeline.py gold): rebuilt on every run, in one write (INSERT OVERWRITE), from the
--- current version of each movie and album in silver, with their genres.
+-- current version of each movie, TV show and album in silver, with their genres.
 WITH media AS (
   SELECT
     concat('movie:', CAST(movie_id AS STRING))  AS media_key,
@@ -15,6 +15,12 @@ WITH media AS (
   WHERE is_current
   UNION ALL
   SELECT
+    concat('tv:', CAST(tv_id AS STRING)), CAST(tv_id AS STRING), 'tv', name, CAST(NULL AS STRING), first_air_date,
+    year(first_air_date), original_language, 'tmdb'
+  FROM ${catalog}.silver.tv_show
+  WHERE is_current
+  UNION ALL
+  SELECT
     concat('music:', release_group_id), release_group_id, 'music', title, artist_credit_name, release_date,
     release_year, CAST(NULL AS STRING), 'musicbrainz'
   FROM ${catalog}.silver.release_group
@@ -24,6 +30,10 @@ media_genre AS (
   SELECT concat('movie:', CAST(mg.movie_id AS STRING)) AS media_key, mg.position, g.name
   FROM ${catalog}.silver.movie_genre AS mg
   JOIN ${catalog}.silver.genre AS g ON g.genre_id = mg.genre_id
+  UNION ALL
+  SELECT concat('tv:', CAST(tg.tv_id AS STRING)), tg.position, g.name
+  FROM ${catalog}.silver.tv_show_genre AS tg
+  JOIN ${catalog}.silver.genre AS g ON g.genre_id = tg.genre_id
   UNION ALL
   SELECT concat('music:', rg.release_group_id), rg.position, g.name
   FROM ${catalog}.silver.release_group_genre AS rg

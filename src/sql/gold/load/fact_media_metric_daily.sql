@@ -1,6 +1,7 @@
 -- Full load of gold.fact_media_metric_daily (pipeline.py gold): rebuilt on every run, in one write
--- (INSERT OVERWRITE), from silver.movie_metric_daily and silver.release_group_metric_daily. media_key is built as in
--- gold/load/dim_media.sql, and only media found in gold.dim_media are kept, so every row has its dimension.
+-- (INSERT OVERWRITE), from silver.movie_metric_daily, tv_show_metric_daily and release_group_metric_daily. media_key
+-- is built as in gold/load/dim_media.sql, and only media found in gold.dim_media are kept, so every row has its
+-- dimension.
 -- listen_count is an all-time total: listen_count_change is the difference with the album's previous snapshot
 -- (one day, or more when a day was missed).
 WITH metric AS (
@@ -14,6 +15,17 @@ WITH metric AS (
     CAST(NULL AS BIGINT)                        AS listener_count,
     CAST(NULL AS BIGINT)                        AS listen_count_change
   FROM ${catalog}.silver.movie_metric_daily
+  UNION ALL
+  SELECT
+    snapshot_date,
+    concat('tv:', CAST(tv_id AS STRING)),
+    popularity,
+    vote_average,
+    vote_count,
+    CAST(NULL AS BIGINT),
+    CAST(NULL AS BIGINT),
+    CAST(NULL AS BIGINT)
+  FROM ${catalog}.silver.tv_show_metric_daily
   UNION ALL
   SELECT
     snapshot_date,

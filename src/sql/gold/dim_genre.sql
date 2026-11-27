@@ -8,4 +8,4 @@ CREATE TABLE IF NOT EXISTS ${catalog}.gold.dim_genre (
 )
 USING DELTA
 LOCATION '${gold_root}/dim_genre'
-COMMENT 'Genres of movies and albums, full load';
+COMMENT 'Genres of movies, TV shows and albums, full load';

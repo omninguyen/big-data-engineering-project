@@ -528,6 +528,11 @@ class GoldStatementTest(unittest.TestCase):
         self.assertIn("concat('music:', rg.release_group_id), rg.position", text)
         self.assertIn("sort_array(collect_list(struct(position, name)))", text)  # primary genre first
         self.assertIn("LEFT JOIN genres AS g ON g.media_key = m.media_key", text)  # media without genres are kept
+        # TV shows: tv:<TMDB tv_id>, the current version, their first air date as release date
+        self.assertIn("concat('tv:', CAST(tv_id AS STRING)), CAST(tv_id AS STRING), 'tv', name, CAST(NULL AS STRING), "
+                      "first_air_date,\n    year(first_air_date), original_language, 'tmdb'", text)
+        self.assertIn("FROM cat.silver.tv_show\n  WHERE is_current", text)
+        self.assertIn("concat('tv:', CAST(tg.tv_id AS STRING)), tg.position, g.name", text)
 
     def test_genre_and_bridge(self):
         genre = sql.render("gold/load", "dim_genre", catalog="cat")
@@ -541,6 +546,8 @@ class GoldStatementTest(unittest.TestCase):
         self.assertIn("concat('music:', release_group_id), genre_id, position", bridge)
         self.assertIn("FROM cat.silver.movie_genre", bridge)
         self.assertIn("FROM cat.silver.release_group_genre", bridge)
+        self.assertIn("concat('tv:', CAST(tv_id AS STRING)), genre_id, position\n  FROM cat.silver.tv_show_genre",
+                      bridge)
         # one primary genre per media, the lowest position, as dim_media.primary_genre
         self.assertIn("row_number() OVER (PARTITION BY media_key ORDER BY position) = 1  AS is_primary", bridge)
 
@@ -552,6 +559,7 @@ class GoldStatementTest(unittest.TestCase):
         # the same media_key as gold.dim_media
         self.assertIn("concat('movie:', CAST(movie_id AS STRING)) AS media_key", text)
         self.assertIn("concat('music:', release_group_id), valid_from", text)
+        self.assertIn("concat('tv:', CAST(tv_id AS STRING)), valid_from\n  FROM cat.silver.tv_show\n", text)
         self.assertIn("CASE WHEN row_number() OVER (PARTITION BY media_key ORDER BY valid_from) = 1 THEN 'new'", text)
         self.assertIn("date_format(from_utc_timestamp(valid_from, 'Asia/Ho_Chi_Minh'), 'yyyyMMdd')", text)
 
@@ -559,6 +567,9 @@ class GoldStatementTest(unittest.TestCase):
         text = sql.render("gold/load", "fact_media_metric_daily", catalog="cat")
         self.assertIn("FROM cat.silver.movie_metric_daily", text)
         self.assertIn("FROM cat.silver.release_group_metric_daily", text)
+        self.assertIn("FROM cat.silver.tv_show_metric_daily", text)
+        self.assertIn("concat('tv:', CAST(tv_id AS STRING)),\n    popularity,\n    vote_average,\n    vote_count,",
+                      text)  # TMDB metrics, as movies
         # the same keys as gold.dim_media and gold.dim_date
         self.assertIn("concat('movie:', CAST(movie_id AS STRING))  AS media_key", text)
         self.assertIn("concat('music:', release_group_id),", text)
@@ -779,12 +790,19 @@ class MartsStatementTest(unittest.TestCase):
         top = view("top_titles")
         self.assertIn("max(d.date) OVER (PARTITION BY m.media_type)  AS latest_date", top)
         self.assertIn("WHERE snapshot_date = latest_date", top)  # the latest snapshot of each media type
-        self.assertIn("CASE WHEN media_type = 'movie' THEN popularity ELSE listen_count END DESC NULLS LAST", top)
+        # albums by listens, movies and TV shows by TMDB popularity
+        self.assertIn("CASE WHEN media_type = 'music' THEN listen_count ELSE popularity END DESC NULLS LAST", top)
         self.assertIn("sum(f.listen_count_change)  AS listens_gained", view("daily_listens"))
         trending = view("trending_7d")
         self.assertIn("WHERE date > date_sub(latest_date, 7)", trending)  # the last 7 snapshot days
         self.assertIn("HAVING max(date) = max(latest_date)", trending)  # still in the latest snapshot
         self.assertIn("max_by(popularity, date) - min_by(popularity, date)", trending)
+        self.assertIn("CASE WHEN r.media_type = 'music' THEN r.listens_gained_7d ELSE r.popularity_change_7d END",
+                      trending)
+        self.assertIn("CASE WHEN r.media_type = 'music' THEN l.listen_count ELSE l.popularity END",
+                      view("new_releases"))
+        for name in ("top_titles", "trending_7d", "new_releases", "catalog_items", "catalog_changes"):
+            self.assertRegex(view(name), r"\n  media_type +COMMENT 'movie \| tv \| music'")
 
     def test_new_releases_and_catalog_changes(self):
         releases = view("new_releases")
@@ -810,6 +828,7 @@ class MartsStatementTest(unittest.TestCase):
         self.assertIn("count(*) AS items, sum(f.views) AS views", view("daily_wiki_views"))
         coverage = view("wiki_coverage")
         self.assertIn("FROM cat.gold.dim_media AS m", coverage)  # every media, with an article or not
+        self.assertIn("WHERE m.media_type IN ('movie', 'music')", coverage)  # TV shows are not looked up on Wikidata
         self.assertIn("LEFT JOIN cat.gold.dim_wiki_page AS p ON p.media_key = m.media_key", coverage)
         self.assertIn("try_divide(count(p.media_key), count(*))", coverage)
 

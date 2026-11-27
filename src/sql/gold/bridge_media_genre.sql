@@ -11,4 +11,4 @@ CREATE TABLE IF NOT EXISTS ${catalog}.gold.bridge_media_genre (
 )
 USING DELTA
 LOCATION '${gold_root}/bridge_media_genre'
-COMMENT 'Genres of each movie and album, full load';
+COMMENT 'Genres of each movie, TV show and album, full load';

@@ -1,5 +1,5 @@
--- Mart view for the dashboard (Preset): how many movies and albums have a Wikipedia article. Created or replaced by:
--- pipeline.py marts.
+-- Mart view for the dashboard (Preset): how many movies and albums have a Wikipedia article. TV shows are left out:
+-- the Wikipedia ingest looks up movies and albums only. Created or replaced by: pipeline.py marts.
 CREATE OR REPLACE VIEW ${catalog}.marts.wiki_coverage (
   media_type          COMMENT 'movie | music',
   items               COMMENT 'movies or albums in the catalog',
@@ -15,4 +15,5 @@ SELECT
   round(100 * try_divide(count(p.media_key), count(*)), 1)     AS coverage_pct
 FROM ${catalog}.gold.dim_media AS m
 LEFT JOIN ${catalog}.gold.dim_wiki_page AS p ON p.media_key = m.media_key
+WHERE m.media_type IN ('movie', 'music')
 GROUP BY m.media_type;

@@ -41,12 +41,13 @@ DAG = {
     "bronze_listenbrainz_release_group_popularity": {"ingest_listenbrainz", "setup_tables"},
     "silver_release_group_metric_daily": {"bronze_listenbrainz_release_group_popularity"},
     "gold_dim_date": {"setup_tables"},  # the calendar needs no source
-    "gold_dim_media": {"silver_movie_genre", "silver_release_group_genre"},  # after movie, release_group, genre
+    "gold_dim_media": {"silver_movie_genre", "silver_tv_show_genre",  # after movie, tv_show, release_group, genre
+                       "silver_release_group_genre"},
     "gold_dim_genre": {"silver_genre"},
-    "gold_bridge_media_genre": {"silver_movie_genre", "silver_release_group_genre"},
-    "gold_fact_media_metric_daily": {"silver_movie_metric_daily", "silver_release_group_metric_daily",
-                                     "gold_dim_media"},  # reads gold.dim_media
-    "gold_fact_media_change": {"silver_movie", "silver_release_group"},  # the SCD2 versions
+    "gold_bridge_media_genre": {"silver_movie_genre", "silver_tv_show_genre", "silver_release_group_genre"},
+    "gold_fact_media_metric_daily": {"silver_movie_metric_daily", "silver_tv_show_metric_daily",
+                                     "silver_release_group_metric_daily", "gold_dim_media"},  # reads gold.dim_media
+    "gold_fact_media_change": {"silver_movie", "silver_tv_show", "silver_release_group"},  # the SCD2 versions
     "gold_dim_wiki_page": {"silver_media_wiki_page", "gold_dim_media"},  # keeps media of dim_media only
     "gold_fact_wiki_pageview_daily": {"silver_wiki_pageview_daily", "gold_dim_wiki_page"},  # media of an article
     "gold_fact_media_trending_daily": {"silver_movie_trending_daily", "gold_dim_media"},  # keeps media of dim_media

@@ -13,4 +13,4 @@ CREATE TABLE IF NOT EXISTS ${catalog}.gold.fact_media_change (
 )
 USING DELTA
 LOCATION '${gold_root}/fact_media_change'
-COMMENT 'New movies and albums, and changes of their details (SCD2 versions in silver), full load';
+COMMENT 'New movies, TV shows and albums, and changes of their details (SCD2 versions in silver), full load';
