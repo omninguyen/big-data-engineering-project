@@ -24,13 +24,16 @@ from string import Template
 
 log = logging.getLogger(__name__)
 HERE = os.path.dirname(os.path.abspath(__file__))
-BRONZE_TABLES = ["tmdb_movies", "musicbrainz_release_groups", "listenbrainz_release_group_popularity"]
+BRONZE_TABLES = ["tmdb_movies", "musicbrainz_release_groups", "listenbrainz_release_group_popularity",
+                 "wikidata_media_articles", "wikipedia_pageviews"]
 SILVER_TABLES = ["load_log", "movie", "movie_metric_daily", "release_group", "artist", "release_group_metric_daily",
-                 "genre", "movie_genre", "release_group_genre", "release_group_artist"]  # genre before its foreign keys
+                 "genre", "movie_genre", "release_group_genre", "release_group_artist",  # genre before its foreign keys
+                 "media_wiki_page", "wiki_pageview_daily"]
 SILVER_INCREMENTAL = {  # silver table: its bronze table
     "movie": "tmdb_movies", "movie_metric_daily": "tmdb_movies",
     "release_group": "musicbrainz_release_groups", "artist": "musicbrainz_release_groups",
-    "release_group_metric_daily": "listenbrainz_release_group_popularity"}
+    "release_group_metric_daily": "listenbrainz_release_group_popularity",
+    "media_wiki_page": "wikidata_media_articles", "wiki_pageview_daily": "wikipedia_pageviews"}
 SILVER_FULL = ["genre", "movie_genre", "release_group_genre", "release_group_artist"]
 SILVER_LOADED = [*SILVER_INCREMENTAL, *SILVER_FULL]  # every silver table with a load (load_log is written by them)
 GOLD_TABLES = ["dim_date", "dim_media", "dim_genre", "bridge_media_genre",  # full loads; dims before their foreign keys
