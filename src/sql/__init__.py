@@ -43,10 +43,12 @@ GOLD_TABLES = ["dim_date", "dim_media", "dim_genre", "bridge_media_genre",  # fu
                "fact_media_metric_daily", "fact_media_change", "dim_wiki_page", "fact_wiki_pageview_daily",
                "fact_media_trending_daily"]
 OPS_TABLES = ["pipeline_record_metrics", "data_quality_results"]  # full loads; data_quality_results reads the first
+OPS_JOB_TABLES = ["pipeline_task_runs"]  # from the Jobs API (src/job_runs.py): loaded with --table and --job-id only
 MARTS_VIEWS = ["catalog_items", "items_per_genre", "items_per_release_year", "movies_by_language", "top_titles",
                "daily_listens", "trending_7d", "new_releases", "catalog_changes",
                "wiki_attention", "daily_wiki_views", "wiki_coverage", "tmdb_trending_today",  # content, over gold
-               "freshness", "latest_quality_checks", "quality_history", "data_catalog"]  # operations, over ops
+               "freshness", "latest_quality_checks", "quality_history", "data_catalog",
+               "task_runs_daily"]  # operations, over ops
 BATCH_ID = re.compile(r"[0-9A-Za-z-]+")
 
 
@@ -127,7 +129,7 @@ def create_ops_tables(spark) -> list:
     from common import config
     root = _abfss("OPS_ROOT", config.OPS_ROOT,
                   "abfss://gold@<account>.dfs.core.windows.net/ops (ops/ in the container gold, from GOLD_ROOT)")
-    return _create(spark, "ops", OPS_TABLES, root, "ops_root")
+    return _create(spark, "ops", [*OPS_TABLES, *OPS_JOB_TABLES], root, "ops_root")
 
 
 def create_tables(spark) -> list:
@@ -204,6 +206,11 @@ def load_gold_tables(spark) -> dict:
 def load_ops_table(spark, name: str) -> dict:
     """Rebuild one ops table from bronze and silver.load_log (full load). Returns {"rows": n}."""
     return _full_load(spark, "ops", name, OPS_TABLES)
+
+
+def load_ops_job_table(spark, name: str) -> dict:
+    """Write an ops table from the Jobs API, once src/job_runs.py has filled its temp view. Returns {"rows": n}."""
+    return _full_load(spark, "ops", name, OPS_JOB_TABLES)
 
 
 def load_ops_tables(spark) -> dict:

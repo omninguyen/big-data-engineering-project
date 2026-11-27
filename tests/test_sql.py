@@ -643,7 +643,7 @@ class OpsStatementTest(unittest.TestCase):
     }
 
     def test_external_delta_tables_in_ops_with_a_primary_key(self):
-        for name in sql.OPS_TABLES:
+        for name in [*sql.OPS_TABLES, *sql.OPS_JOB_TABLES]:
             with self.subTest(table=name):
                 text = create("ops", name)
                 self.assertNotIn("$", text)
@@ -655,7 +655,7 @@ class OpsStatementTest(unittest.TestCase):
                     self.assertRegex(text, rf"\n  {column} +\w+ +NOT NULL")
         for folder in ("ops", "ops/load"):
             files = [f[:-len(".sql")] for f in os.listdir(os.path.join(sql.HERE, folder)) if f.endswith(".sql")]
-            self.assertEqual(sorted(files), sorted(sql.OPS_TABLES), folder)
+            self.assertEqual(sorted(files), sorted([*sql.OPS_TABLES, *sql.OPS_JOB_TABLES]), folder)
 
     def test_agreed_columns(self):
         self.assertEqual(columns("pipeline_record_metrics", "ops"), [
@@ -764,6 +764,8 @@ class MartsStatementTest(unittest.TestCase):
         "quality_history": ["date", "dataset", "batches", "rows_read", "rows_valid", "rows_rejected",
                             "rows_duplicate", "files", "bytes", "silver_lag_s", "failed_critical", "failed_warning"],
         "data_catalog": ["layer", "table_name", "table_type", "description", "owner", "created", "last_altered"],
+        "task_runs_daily": ["date", "task_key", "runs", "succeeded", "failed", "retries", "avg_duration_s",
+                            "max_duration_s"],
     }
 
     def test_one_view_per_file_over_gold_and_ops_only(self):
@@ -848,7 +850,7 @@ class MartsStatementTest(unittest.TestCase):
         freshness = view("freshness")
         self.assertIn("WHEN silver_loaded_at IS NULL THEN 'not_loaded'", freshness)
         self.assertIn("timestampdiff(MINUTE, last_ingested_at, current_timestamp()) > 26 * 60 THEN 'stale'", freshness)
-        for name in ("freshness", "data_catalog"):  # times in Vietnam time, as dt and batch_id
+        for name in ("freshness", "data_catalog", "task_runs_daily"):  # times in Vietnam time, as dt and batch_id
             self.assertIn("from_utc_timestamp(", view(name))
             self.assertIn("'Asia/Ho_Chi_Minh')", view(name))
         history = view("quality_history")
@@ -858,6 +860,28 @@ class MartsStatementTest(unittest.TestCase):
         catalog = view("data_catalog")
         self.assertIn("FROM cat.information_schema.tables", catalog)
         self.assertIn("WHERE table_schema IN ('bronze', 'silver', 'gold', 'ops', 'marts')", catalog)
+
+
+class TaskRunsTest(unittest.TestCase):
+    def test_columns_and_load(self):
+        self.assertEqual(columns("pipeline_task_runs", "ops"), [
+            "task_run_id", "job_run_id", "task_key", "attempt", "run_trigger", "state", "state_message", "start_time",
+            "end_time", "duration_s", "_loaded_at"])
+        self.assertIn("PRIMARY KEY (task_run_id)", create("ops", "pipeline_task_runs"))
+        import job_runs
+        self.assertEqual([c.split()[0] for c in job_runs.SCHEMA.split(", ")], columns("pipeline_task_runs", "ops")[:-1])
+        steps = sql.statements(sql.render("ops/load", "pipeline_task_runs", catalog="cat"))
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(column_list(steps[0]), columns("pipeline_task_runs", "ops"))
+        self.assertIn(f"FROM {job_runs.VIEW}\n", steps[0])  # the runs just read from the Jobs API
+        self.assertIn("FROM cat.ops.pipeline_task_runs", steps[0])  # older runs are kept
+        self.assertIn("row_number() OVER (PARTITION BY task_run_id ORDER BY _loaded_at DESC) AS rn", steps[0])
+
+    def test_job_table_needs_its_temp_view_not_the_full_loads(self):
+        self.assertNotIn("pipeline_task_runs", sql.OPS_TABLES)  # ops without --table does not call the Jobs API
+        spark = FakeSpark()
+        with mock.patch.object(config, "UC_CATALOG", "cat"), self.assertLogs("sql", "INFO"):
+            self.assertEqual(sql.load_ops_job_table(spark, "pipeline_task_runs"), {"rows": 2})
 
 
 class MartsTest(unittest.TestCase):
@@ -882,7 +906,7 @@ class OneTableTest(unittest.TestCase):
             tables = sql.create_tables(spark)
         self.assertEqual(tables, [f"cat.bronze.{t}" for t in sql.BRONZE_TABLES] +
                          [f"cat.silver.{t}" for t in sql.SILVER_TABLES] + [f"cat.gold.{t}" for t in sql.GOLD_TABLES] +
-                         [f"cat.ops.{t}" for t in sql.OPS_TABLES])
+                         [f"cat.ops.{t}" for t in [*sql.OPS_TABLES, *sql.OPS_JOB_TABLES]])
 
     def test_one_bronze_table(self):
         spark = FakeSpark()
