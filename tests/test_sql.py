@@ -18,6 +18,7 @@ GOLD = "abfss://gold@acct.dfs.core.windows.net"
 OPS = f"{GOLD}/ops"
 ROOTS = {"bronze": ROOT, "silver": SILVER, "gold": GOLD, "ops": OPS}
 SOURCES = {"tmdb_movies": "tmdb/movies", "tmdb_trending_movies": "tmdb/trending_movies",
+           "tmdb_tv_shows": "tmdb/tv_shows",
            "musicbrainz_release_groups": "musicbrainz/release_groups",
            "listenbrainz_release_group_popularity": "listenbrainz/release_group_popularity",
            "wikidata_media_articles": "wikidata/media_articles", "wikipedia_pageviews": "wikipedia/pageviews"}
@@ -197,8 +198,9 @@ class SilverStatementTest(unittest.TestCase):
                     self.assertRegex(text, rf"\n  {column} +\w+ +NOT NULL")
         files = [f[:-len(".sql")] for f in os.listdir(os.path.join(sql.HERE, "silver", "load"))]
         self.assertEqual(sorted(files), sorted([*sql.SILVER_INCREMENTAL, *sql.SILVER_FULL]))
-        for table in ("movie_genre", "release_group_genre"):  # foreign key to genre
+        for table in ("movie_genre", "release_group_genre", "tv_show_genre"):  # foreign key to genre
             self.assertLess(sql.SILVER_TABLES.index("genre"), sql.SILVER_TABLES.index(table))
+            self.assertLess(sql.SILVER_FULL.index("genre"), sql.SILVER_FULL.index(table))  # loaded after it
 
     def test_agreed_columns(self):
         self.assertEqual(columns("movie", "silver"), [
@@ -237,6 +239,15 @@ class SilverStatementTest(unittest.TestCase):
         self.assertEqual(columns("movie_trending_daily", "silver"),
                          ["movie_id", "snapshot_date", "rank", "batch_id", "_loaded_at"])
         self.assertIn("PRIMARY KEY (movie_id, snapshot_date)", create("silver", "movie_trending_daily"))
+        self.assertEqual(columns("tv_show", "silver"), [
+            "tv_id", "name", "original_name", "overview", "first_air_date", "original_language", "origin_country",
+            "poster_path", "adult", "checksum", "valid_from", "valid_to", "is_current", "batch_id", "_loaded_at"])
+        self.assertIn("PRIMARY KEY (tv_id, valid_from)", create("silver", "tv_show"))
+        self.assertEqual(columns("tv_show_metric_daily", "silver"), [
+            "tv_id", "snapshot_date", "popularity", "vote_average", "vote_count", "batch_id", "_loaded_at"])
+        self.assertIn("PRIMARY KEY (tv_id, snapshot_date)", create("silver", "tv_show_metric_daily"))
+        self.assertEqual(columns("tv_show_genre", "silver"), ["tv_id", "genre_id", "position", "_loaded_at"])
+        self.assertIn("PRIMARY KEY (tv_id, genre_id)", create("silver", "tv_show_genre"))
 
     def test_full_loads(self):
         for name in sql.SILVER_FULL:
@@ -327,6 +338,26 @@ class SilverStatementTest(unittest.TestCase):
         self.assertIn("GROUP BY media_type, source_id", mapping)  # one article per movie or album
         self.assertIn("min_by(url, article)", mapping)
 
+    def test_tv_show_loads(self):
+        steps = sql.statements(sql.render("silver/load", "tv_show", catalog="cat", batch_id="B1"))
+        self.assertEqual(len(steps), 3)  # batch view, close changed versions, add new versions (as silver.movie)
+        self.assertIn("FROM cat.bronze.tmdb_tv_shows", steps[0])
+        self.assertIn("WHERE batch_id = 'B1'", steps[0])
+        self.assertIn("array_join(origin_country, ',')               AS origin_country", steps[0])  # flat column
+        self.assertIn("WHEN MATCHED AND t.checksum <> s.checksum AND s.valid_from > t.valid_from", steps[1])
+        self.assertIn("LEFT ANTI JOIN cat.silver.tv_show AS t ON t.tv_id = s.tv_id AND t.is_current", steps[2])
+        self.assertEqual(column_list(steps[2]), columns("tv_show", "silver"))
+        metric = sql.statements(sql.render("silver/load", "tv_show_metric_daily", catalog="cat", batch_id="B1"))
+        self.assertEqual(len(metric), 1)
+        self.assertIn("WHEN MATCHED AND s.batch_id > t.batch_id THEN UPDATE", metric[0])  # a later batch of the day
+        self.assertEqual(column_list(metric[0]), columns("tv_show_metric_daily", "silver"))
+        genres = sql.render("silver/load", "tv_show_genre", catalog="cat")
+        self.assertIn("concat('tmdb_tv:', lower(trim(name))) AS genre_id", genres)  # TV genres are a list of their own
+        self.assertIn("WHERE tv_id IN (SELECT tv_id FROM cat.silver.tv_show)", genres)
+        genre = sql.render("silver/load", "genre", catalog="cat")
+        self.assertIn("SELECT concat('tmdb_tv:', lower(trim(name))), trim(name), 'tmdb_tv'", genre)
+        self.assertIn("FROM cat.bronze.tmdb_tv_shows", genre)
+
     def test_trending_load(self):
         steps = sql.statements(sql.render("silver/load", "movie_trending_daily", catalog="cat", batch_id="B1"))
         self.assertEqual(len(steps), 1)
@@ -363,8 +394,10 @@ class SilverTest(unittest.TestCase):
             "cat.silver.release_group_metric_daily": {"batches": 0},
             "cat.silver.media_wiki_page": {"batches": 0}, "cat.silver.wiki_pageview_daily": {"batches": 0},
             "cat.silver.movie_trending_daily": {"batches": 0},
+            "cat.silver.tv_show": {"batches": 0}, "cat.silver.tv_show_metric_daily": {"batches": 0},
             "cat.silver.genre": {"rows": 2}, "cat.silver.movie_genre": {"rows": 2},
-            "cat.silver.release_group_genre": {"rows": 2}, "cat.silver.release_group_artist": {"rows": 2}})
+            "cat.silver.release_group_genre": {"rows": 2}, "cat.silver.release_group_artist": {"rows": 2},
+            "cat.silver.tv_show_genre": {"rows": 2}})
         logged = [s for s in spark.statements if "INSERT INTO cat.silver.load_log" in s]
         self.assertEqual(len(logged), 3)
         # the row counts of the batch's MERGE and INSERT, summed (the fake gives 2 inserted, 1 updated for each)
@@ -499,7 +532,9 @@ class GoldStatementTest(unittest.TestCase):
     def test_genre_and_bridge(self):
         genre = sql.render("gold/load", "dim_genre", catalog="cat")
         self.assertIn("FROM cat.silver.genre", genre)
-        self.assertIn("CASE source WHEN 'tmdb' THEN 'movie' WHEN 'musicbrainz' THEN 'music' END", genre)
+        # every source of silver.genre: an unknown one fails the load (NOT NULL)
+        self.assertIn("CASE source WHEN 'tmdb' THEN 'movie' WHEN 'tmdb_tv' THEN 'tv' WHEN 'musicbrainz' THEN 'music'",
+                      genre)
         bridge = sql.render("gold/load", "bridge_media_genre", catalog="cat")
         # the same media_key as gold.dim_media
         self.assertIn("concat('movie:', CAST(movie_id AS STRING)) AS media_key, genre_id, position", bridge)
@@ -585,6 +620,7 @@ class OpsStatementTest(unittest.TestCase):
         "tmdb_movies": ("movie", "try_cast(id AS BIGINT) IS NOT NULL"),
         "tmdb_trending_movies": (
             "movie_trending_daily", "try_cast(id AS BIGINT) IS NOT NULL AND rank IS NOT NULL AND dt IS NOT NULL"),
+        "tmdb_tv_shows": ("tv_show", "try_cast(id AS BIGINT) IS NOT NULL"),
         "musicbrainz_release_groups": ("release_group", "id <> ''"),
         "listenbrainz_release_group_popularity": (
             "release_group_metric_daily",

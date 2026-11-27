@@ -124,6 +124,17 @@ resources:
           spark_python_task:
             python_file: ./src/pipeline.py
             parameters: ["--set", "BRONZE_ROOT=${var.bronze_root}", "bronze", "--table", "tmdb_trending_movies"]
+        - task_key: bronze_tmdb_tv_shows   # COPY INTO from landing/: TV shows
+          depends_on:
+            - task_key: ingest_tmdb
+            - task_key: setup_tables
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 900
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["--set", "BRONZE_ROOT=${var.bronze_root}", "bronze", "--table", "tmdb_tv_shows"]
         - task_key: bronze_musicbrainz_release_groups
           depends_on:
             - task_key: ingest_musicbrainz
@@ -239,6 +250,37 @@ resources:
           spark_python_task:
             python_file: ./src/pipeline.py
             parameters: ["silver", "--table", "movie_trending_daily"]
+        - task_key: silver_tv_show   # SCD2 of the TV shows
+          depends_on:
+            - task_key: bronze_tmdb_tv_shows
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 1800
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["silver", "--table", "tv_show"]
+        - task_key: silver_tv_show_metric_daily   # incremental
+          depends_on:
+            - task_key: bronze_tmdb_tv_shows
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 1800
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["silver", "--table", "tv_show_metric_daily"]
+        - task_key: silver_tv_show_genre   # full load
+          depends_on:
+            - task_key: silver_tv_show
+            - task_key: silver_genre
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 1800
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["silver", "--table", "tv_show_genre"]
         - task_key: silver_wiki_pageview_daily   # incremental: daily Wikipedia pageviews per article
           depends_on:
             - task_key: bronze_wikipedia_pageviews
@@ -249,10 +291,11 @@ resources:
           spark_python_task:
             python_file: ./src/pipeline.py
             parameters: ["silver", "--table", "wiki_pageview_daily"]
-        - task_key: silver_genre   # full load, from both sources
+        - task_key: silver_genre   # full load, from the TMDB (movies, TV) and MusicBrainz bronze tables
           depends_on:
             - task_key: bronze_tmdb_movies
             - task_key: bronze_musicbrainz_release_groups
+            - task_key: bronze_tmdb_tv_shows
           environment_key: default
           max_retries: 1
           min_retry_interval_millis: 60000
@@ -395,6 +438,7 @@ resources:
           depends_on:
             - task_key: silver_movie                        # TMDB
             - task_key: silver_movie_trending_daily
+            - task_key: silver_tv_show
             - task_key: silver_release_group_metric_daily   # runs after silver_release_group (MusicBrainz)
             - task_key: silver_media_wiki_page              # Wikipedia
             - task_key: silver_wiki_pageview_daily

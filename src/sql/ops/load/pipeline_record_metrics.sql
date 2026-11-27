@@ -1,6 +1,6 @@
 -- Full load of ops.pipeline_record_metrics (pipeline.py ops): rebuilt on every run, in one write (INSERT OVERWRITE),
 -- from every batch in bronze. valid_key is the key silver takes from a row, or NULL when the silver load filters it
--- out: the same predicates as silver/load/movie.sql, movie_trending_daily.sql, release_group.sql,
+-- out: the same predicates as silver/load/movie.sql, movie_trending_daily.sql, tv_show.sql, release_group.sql,
 -- release_group_metric_daily.sql, media_wiki_page.sql and wiki_pageview_daily.sql.
 WITH bronze_rows AS (
   SELECT
@@ -15,6 +15,11 @@ WITH bronze_rows AS (
     CASE WHEN try_cast(id AS BIGINT) IS NOT NULL AND rank IS NOT NULL AND dt IS NOT NULL
       THEN CAST(try_cast(id AS BIGINT) AS STRING) END
   FROM ${catalog}.bronze.tmdb_trending_movies
+  UNION ALL
+  SELECT
+    'tmdb_tv_shows', 'tv_show', batch_id, dt, _source_file, _file_size, _file_modified_at, _ingested_at,
+    CASE WHEN try_cast(id AS BIGINT) IS NOT NULL THEN CAST(try_cast(id AS BIGINT) AS STRING) END
+  FROM ${catalog}.bronze.tmdb_tv_shows
   UNION ALL
   SELECT
     'musicbrainz_release_groups', 'release_group', batch_id, dt, _source_file, _file_size, _file_modified_at,

@@ -3,7 +3,7 @@
 CREATE TABLE IF NOT EXISTS ${catalog}.silver.genre (
   genre_id    STRING     NOT NULL COMMENT '<source>:<lower-case name>, e.g. tmdb:science fiction, musicbrainz:rock',
   name        STRING     NOT NULL COMMENT 'display name as delivered',
-  source      STRING     NOT NULL COMMENT 'tmdb | musicbrainz',
+  source      STRING     NOT NULL COMMENT 'tmdb (movies) | tmdb_tv (TV shows) | musicbrainz',
   _loaded_at  TIMESTAMP  NOT NULL COMMENT 'when this row was last written to silver',
   CONSTRAINT genre_pk PRIMARY KEY (genre_id)
 )

@@ -3,6 +3,6 @@
 INSERT OVERWRITE ${catalog}.gold.dim_genre (genre_id, genre_name, media_type)
 SELECT
   genre_id,
-  name                                                                       AS genre_name,
-  CASE source WHEN 'tmdb' THEN 'movie' WHEN 'musicbrainz' THEN 'music' END  AS media_type
+  name                                                                                               AS genre_name,
+  CASE source WHEN 'tmdb' THEN 'movie' WHEN 'tmdb_tv' THEN 'tv' WHEN 'musicbrainz' THEN 'music' END  AS media_type
 FROM ${catalog}.silver.genre;
