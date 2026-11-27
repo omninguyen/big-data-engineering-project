@@ -55,10 +55,12 @@ DAG = {
                                     "silver_release_group_metric_daily", "silver_media_wiki_page",
                                     "silver_wiki_pageview_daily"},
     "ops_data_quality_results": {"ops_pipeline_record_metrics"},
+    "ops_pipeline_task_runs": {"ops_data_quality_results"},  # near the end: records the runs of every task
     "marts_views": {"setup_tables"},  # views need the tables, not their data
 }
 # Tasks that also run when a task they wait for failed (the others run only when all of them succeeded).
-RUN_IF = {"ops_pipeline_record_metrics": "ALL_DONE"}  # monitors the batches of a failed path too
+RUN_IF = {"ops_pipeline_record_metrics": "ALL_DONE",
+          "ops_pipeline_task_runs": "ALL_DONE"}  # monitors the batches of a failed path too
 
 try:
     import yaml
@@ -110,7 +112,7 @@ class BundleTest(unittest.TestCase):
         self.assertEqual(sorted(loads["bronze"]), sorted(sql.BRONZE_TABLES))
         self.assertEqual(sorted(loads["silver"]), sorted(sql.SILVER_LOADED))
         self.assertEqual(sorted(loads["gold"]), sorted(sql.GOLD_TABLES))
-        self.assertEqual(sorted(loads["ops"]), sorted(sql.OPS_TABLES))
+        self.assertEqual(sorted(loads["ops"]), sorted([*sql.OPS_TABLES, *sql.OPS_JOB_TABLES]))
 
     def test_setup_creates_the_tables_first(self):
         tasks, _ = self.tasks_and_environments()

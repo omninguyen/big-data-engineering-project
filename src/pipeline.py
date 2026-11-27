@@ -6,7 +6,7 @@ then the bronze, silver and gold tables in Unity Catalog, and the ops tables tha
   python pipeline.py [--set KEY=VALUE ...] bronze [--table <bronze table>]
   python pipeline.py [--set KEY=VALUE ...] silver [--table <silver table>]
   python pipeline.py [--set KEY=VALUE ...] gold [--table <gold table>]
-  python pipeline.py [--set KEY=VALUE ...] ops [--table <ops table>]
+  python pipeline.py [--set KEY=VALUE ...] ops [--table <ops table>] [--job-id <job id>]
   python pipeline.py [--set KEY=VALUE ...] marts
 
 ingest     TMDB movies -> <bronze>/tmdb/movies/dt=<date>/batch_id=<batch id>/, the rank of today's trending
@@ -143,6 +143,9 @@ def gold(args) -> dict:
 def ops(args) -> dict:
     import sql
     spark = _spark()
+    if args.table in sql.OPS_JOB_TABLES:  # from the Jobs API
+        import job_runs
+        return job_runs.load(spark, args.job_id)
     return sql.load_ops_table(spark, args.table) if args.table else sql.load_ops_tables(spark)
 
 
@@ -172,7 +175,8 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser("gold", help="rebuild a gold table from silver (default: all)")
     s.add_argument("--table", choices=sql.GOLD_TABLES)
     s = sub.add_parser("ops", help="rebuild an ops table: pipeline metrics and data quality (default: all)")
-    s.add_argument("--table", choices=sql.OPS_TABLES)
+    s.add_argument("--table", choices=[*sql.OPS_TABLES, *sql.OPS_JOB_TABLES])
+    s.add_argument("--job-id", default="", help="id of this job, for --table pipeline_task_runs: {{job.id}}")
     sub.add_parser("marts", help="create or replace the views of the marts schema, read by the dashboard")
     return p
 

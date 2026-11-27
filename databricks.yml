@@ -51,6 +51,7 @@ resources:
             environment_version: "3"   # serverless, Python 3.12
             dependencies:
               - requests>=2.31,<3
+              - databricks-sdk>=0.30,<1   # Jobs API (src/job_runs.py)
       # One task per table, so the job graph shows the path of the data: source -> bronze -> silver -> gold.
       # The ops tasks come last and monitor every batch. marts_views (re)creates the views read by the dashboard.
       # The TMDB and MusicBrainz paths are independent: when one source fails, the other still reaches silver,
@@ -464,6 +465,17 @@ resources:
           spark_python_task:
             python_file: ./src/pipeline.py
             parameters: ["ops", "--table", "data_quality_results"]
+        - task_key: ops_pipeline_task_runs   # task runs of this job, from the Jobs API (no system tables needed)
+          depends_on:
+            - task_key: ops_data_quality_results
+          run_if: ALL_DONE   # also when a task failed: that is what it records
+          environment_key: default
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          timeout_seconds: 900
+          spark_python_task:
+            python_file: ./src/pipeline.py
+            parameters: ["ops", "--table", "pipeline_task_runs", "--job-id", "{{job.id}}"]
         - task_key: marts_views   # views over gold and ops for the dashboard (Preset); they hold no data
           depends_on:
             - task_key: setup_tables
