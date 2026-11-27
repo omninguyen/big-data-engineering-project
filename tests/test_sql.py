@@ -592,6 +592,13 @@ class MartsStatementTest(unittest.TestCase):
         "daily_listens": ["date", "albums_measured", "listens_gained", "total_listens"],
         "trending_7d": ["media_type", "rank", "title", "creator", "primary_genre", "listens_gained_7d",
                         "popularity_change_7d", "window_end"],
+        "freshness": ["dataset", "last_batch_id", "last_dt", "last_ingested_at", "hours_since_ingest",
+                      "last_silver_loaded_at", "silver_lag_s", "status"],
+        "latest_quality_checks": ["dataset", "batch_id", "dt", "check_name", "severity", "value", "op", "threshold",
+                                  "passed", "description"],
+        "quality_history": ["date", "dataset", "batches", "rows_read", "rows_valid", "rows_rejected",
+                            "rows_duplicate", "files", "bytes", "silver_lag_s", "failed_critical", "failed_warning"],
+        "data_catalog": ["layer", "table_name", "table_type", "description", "owner", "created", "last_altered"],
     }
 
     def test_one_view_per_file_over_gold_and_ops_only(self):
@@ -624,6 +631,24 @@ class MartsStatementTest(unittest.TestCase):
         self.assertIn("WHERE date > date_sub(latest_date, 7)", trending)  # the last 7 snapshot days
         self.assertIn("HAVING max(date) = max(latest_date)", trending)  # still in the latest snapshot
         self.assertIn("max_by(popularity, date) - min_by(popularity, date)", trending)
+
+    def test_operations_views(self):
+        for name in ("freshness", "latest_quality_checks"):  # batch ids start with their time: greatest = latest
+            self.assertIn("row_number() OVER (PARTITION BY dataset ORDER BY batch_id DESC) AS rn", view(name))
+            self.assertIn("WHERE rn = 1", view(name))
+        freshness = view("freshness")
+        self.assertIn("WHEN silver_loaded_at IS NULL THEN 'not_loaded'", freshness)
+        self.assertIn("timestampdiff(MINUTE, last_ingested_at, current_timestamp()) > 26 * 60 THEN 'stale'", freshness)
+        for name in ("freshness", "data_catalog"):  # times in Vietnam time, as dt and batch_id
+            self.assertIn("from_utc_timestamp(", view(name))
+            self.assertIn("'Asia/Ho_Chi_Minh')", view(name))
+        history = view("quality_history")
+        self.assertIn("LEFT JOIN checks AS c ON c.dataset = r.dataset AND c.batch_id = r.batch_id", history)
+        self.assertIn("count_if(NOT passed AND severity = 'critical')", history)
+        self.assertIn("GROUP BY r.dt, r.dataset", history)
+        catalog = view("data_catalog")
+        self.assertIn("FROM cat.information_schema.tables", catalog)
+        self.assertIn("WHERE table_schema IN ('bronze', 'silver', 'gold', 'ops', 'marts')", catalog)
 
 
 class MartsTest(unittest.TestCase):
