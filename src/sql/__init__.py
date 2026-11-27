@@ -37,7 +37,8 @@ GOLD_TABLES = ["dim_date", "dim_media", "dim_genre", "bridge_media_genre",  # fu
                "fact_media_metric_daily"]
 OPS_TABLES = ["pipeline_record_metrics", "data_quality_results"]  # full loads; data_quality_results reads the first
 MARTS_VIEWS = ["catalog_items", "items_per_genre", "items_per_release_year", "movies_by_language", "top_titles",
-               "daily_listens", "trending_7d"]
+               "daily_listens", "trending_7d",  # content, over gold
+               "freshness", "latest_quality_checks", "quality_history", "data_catalog"]  # operations, over ops
 BATCH_ID = re.compile(r"[0-9A-Za-z-]+")
 
 
